@@ -20,3 +20,7 @@ pytest-cov
 pytest-mock
 httpx
 factory-boy
+pandas
+scikit-learn
+joblib
+numpy

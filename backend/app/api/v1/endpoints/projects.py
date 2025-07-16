@@ -13,6 +13,9 @@ from ...services.bim_processor import process_ifc_file
 from ...tasks.process_ifc import process_ifc_task, convert_ifc_to_gltf, convert_ifc_to_xkt, run_inter_model_clash_detection
 from ...auth.dependencies import get_current_active_user
 from ...services.rules_engine import suggest_solutions_for_conflict, create_solution_from_rules
+from ...services.feedback_service import FeedbackDataCollector
+from ...services.ml_service import Predictor
+from ...tasks.ml_tasks import train_risk_prediction_model
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -287,6 +290,15 @@ def submit_solution_feedback(
             
             db.commit()
     
+    # Collect data for ML training
+    feedback_collector = FeedbackDataCollector(db)
+    if existing_feedback:
+        feedback_collector.collect_feedback_data(existing_feedback)
+    else:
+        feedback_obj = db.query(SolutionFeedback).filter(SolutionFeedback.id == feedback_id).first()
+        if feedback_obj:
+            feedback_collector.collect_feedback_data(feedback_obj)
+    
     return {
         "message": "Feedback submitted successfully",
         "feedback_id": feedback_id,
@@ -543,4 +555,80 @@ def run_inter_model_clash_detection_endpoint(
         "message": "Inter-model clash detection started",
         "task_id": task.id,
         "project_id": project_id
+    }
+
+
+@router.get("/{project_id}/predict-risk")
+def predict_project_risk(
+    project_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get AI-powered risk prediction for a project"""
+    # Verify project ownership
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Use ML predictor to get risk assessment
+    predictor = Predictor()
+    risk_prediction = predictor.predict_project_risk(project_id)
+    
+    if "error" in risk_prediction:
+        raise HTTPException(status_code=500, detail=risk_prediction["error"])
+    
+    return risk_prediction
+
+
+@router.post("/ml/train-model")
+def trigger_model_training(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Trigger ML model training (admin only)"""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only administrators can trigger model training")
+    
+    # Start async model training task
+    task = train_risk_prediction_model.delay()
+    
+    return {
+        "message": "ML model training started",
+        "task_id": task.id
+    }
+
+
+@router.get("/ml/model-status")
+def get_model_status(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get status of ML models"""
+    import os
+    
+    model_path = "/app/models"
+    risk_model_file = "risk_prediction_model.pkl"
+    encoders_file = "label_encoders.pkl"
+    scaler_file = "feature_scaler.pkl"
+    
+    model_exists = os.path.exists(os.path.join(model_path, risk_model_file))
+    encoders_exist = os.path.exists(os.path.join(model_path, encoders_file))
+    scaler_exists = os.path.exists(os.path.join(model_path, scaler_file))
+    
+    models_ready = model_exists and encoders_exist and scaler_exists
+    
+    # Get training data count
+    from ..db.models.analytics import HistoricalConflict
+    training_data_count = db.query(HistoricalConflict).count()
+    
+    return {
+        "models_ready": models_ready,
+        "model_exists": model_exists,
+        "encoders_exist": encoders_exist,
+        "scaler_exists": scaler_exists,
+        "training_data_count": training_data_count,
+        "minimum_data_required": 10
     }

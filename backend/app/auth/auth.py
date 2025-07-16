@@ -5,11 +5,12 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from ..db.models.project import User
 from ..db.database import get_db
+from ..core.config import settings
 
-# Security configuration
-SECRET_KEY = "your-secret-key-here"  # In production, use environment variable
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# Security configuration from environment variables
+SECRET_KEY = settings.SECRET_KEY
+ALGORITHM = settings.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

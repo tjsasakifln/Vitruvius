@@ -110,8 +110,16 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
+        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+        CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
       run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG -f backend/Dockerfile backend/
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG -f backend/Dockerfile backend/ \
+          --build-arg SECRET_KEY="$SECRET_KEY" \
+          --build-arg DATABASE_URL="$DATABASE_URL" \
+          --build-arg CELERY_BROKER_URL="$CELERY_BROKER_URL" \
+          --build-arg CELERY_RESULT_BACKEND="$CELERY_RESULT_BACKEND"
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
@@ -120,8 +128,16 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
+        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+        CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
       run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG -f backend/Dockerfile.worker backend/
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG -f backend/Dockerfile.worker backend/ \
+          --build-arg SECRET_KEY="$SECRET_KEY" \
+          --build-arg DATABASE_URL="$DATABASE_URL" \
+          --build-arg CELERY_BROKER_URL="$CELERY_BROKER_URL" \
+          --build-arg CELERY_RESULT_BACKEND="$CELERY_RESULT_BACKEND"
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest

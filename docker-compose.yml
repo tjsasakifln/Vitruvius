@@ -10,6 +10,8 @@ services:
     depends_on:
       - db
       - redis
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/vitruvius_db
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -23,6 +25,8 @@ services:
       - ./backend/app:/app
     depends_on:
       - redis
+    env_file:
+      - .env
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0

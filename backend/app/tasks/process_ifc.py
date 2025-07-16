@@ -10,9 +10,10 @@ from ..services.bim_processor import process_ifc_file
 from ..services.rules_engine import run_prescriptive_analysis
 from ..db.models.project import Project, IFCModel, Conflict, Solution
 from ..db.database import DATABASE_URL
+from ..core.config import settings
 
 # Configure Celery
-celery_app = Celery('tasks', broker='redis://redis:6379/0', backend='redis://redis:6379/0')
+celery_app = Celery('tasks', broker=settings.CELERY_BROKER_URL, backend=settings.CELERY_RESULT_BACKEND)
 
 # Database setup for Celery tasks
 engine = create_engine(DATABASE_URL)

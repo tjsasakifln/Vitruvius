@@ -1,0 +1,89 @@
+name: Vitruvius CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Backend Dependencies
+      run: pip install -r backend/requirements.txt
+
+    - name: Run Backend Tests
+      run: |
+        # Add backend test command here
+        echo "No backend tests defined yet."
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Install Frontend Dependencies
+      run: npm install --prefix frontend
+
+    - name: Run Frontend Tests
+      run: |
+        # Add frontend test command here
+        echo "No frontend tests defined yet."
+
+  build-and-push-docker:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push Backend image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile
+        push: true
+        tags: your-dockerhub-username/vitruvius-backend:latest
+
+    - name: Build and push Worker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile.worker
+        push: true
+        tags: your-dockerhub-username/vitruvius-worker:latest
+
+    - name: Build and push Frontend image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        push: true
+        tags: your-dockerhub-username/vitruvius-frontend:latest
+
+  deploy-to-aws:
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Deploy to AWS
+      run: |
+        # Add deployment script here
+        echo "Deployment to AWS not configured yet."

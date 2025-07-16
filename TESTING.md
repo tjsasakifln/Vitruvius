@@ -2,63 +2,63 @@
 
 ## 🎯 Testing Objectives
 
-Este documento detalha a estratégia de testes implementada para garantir a qualidade e confiabilidade da plataforma Vitruvius.
+This document details the testing strategy implemented to ensure quality and reliability of the Vitruvius platform.
 
-## 📊 Cobertura de Código
+## 📊 Code Coverage
 
-### Meta de Cobertura: **80%**
+### Coverage Target: **80%**
 
-A cobertura de código é monitorada automaticamente e deve atingir no mínimo 80% para aprovação em Pull Requests.
+Code coverage is automatically monitored and must reach at least 80% for Pull Request approval.
 
-### Relatórios de Cobertura
+### Coverage Reports
 
 - **HTML**: `backend/htmlcov/index.html`
 - **XML**: `backend/coverage.xml`
-- **Terminal**: Output direto durante execução dos testes
+- **Terminal**: Direct output during test execution
 
-## 🧪 Tipos de Testes
+## 🧪 Test Types
 
-### 1. **Testes Unitários** (`backend/tests/unit/`)
+### 1. **Unit Tests** (`backend/tests/unit/`)
 
-**Objetivo**: Testar funções e métodos individuais isoladamente.
+**Objective**: Test individual functions and methods in isolation.
 
-#### Cobertura Principal:
-- `test_rules_engine.py`: Testa o motor de regras prescritivas
-  - Cálculo de custos e prazos
-  - Geração de soluções para diferentes conflitos
-  - Validação de lógica de negócio
+#### Main Coverage:
+- `test_rules_engine.py`: Tests the prescriptive rules engine
+  - Cost and timeline calculations
+  - Solution generation for different conflicts
+  - Business logic validation
 
-#### Executar:
+#### Execute:
 ```bash
 cd backend
 pytest tests/unit/ -v
 ```
 
-### 2. **Testes de Integração** (`backend/tests/integration/`)
+### 2. **Integration Tests** (`backend/tests/integration/`)
 
-**Objetivo**: Testar a interação entre componentes do sistema.
+**Objective**: Test interaction between system components.
 
-#### Cobertura Principal:
-- `test_auth_endpoints.py`: Autenticação e autorização
-- `test_project_endpoints.py`: CRUD de projetos, upload IFC, feedback
+#### Main Coverage:
+- `test_auth_endpoints.py`: Authentication and authorization
+- `test_project_endpoints.py`: Project CRUD, IFC upload, feedback
 
-#### Executar:
+#### Execute:
 ```bash
 cd backend
 pytest tests/integration/ -v
 ```
 
-### 3. **Testes End-to-End** (`e2e-tests/`)
+### 3. **End-to-End Tests** (`e2e-tests/`)
 
-**Objetivo**: Testar fluxos completos do usuário na aplicação.
+**Objective**: Test complete user flows in the application.
 
-#### Cenários Cobertos:
-- **Fluxo de Autenticação**: Registro, login, logout
-- **Fluxo de Projeto**: Criação, upload IFC, visualização 3D
-- **Fluxo de Conflitos**: Detecção, análise, feedback
-- **Fluxo de Feedback**: Seleção de soluções, feedback customizado
+#### Covered Scenarios:
+- **Authentication Flow**: Registration, login, logout
+- **Project Flow**: Creation, IFC upload, 3D visualization
+- **Conflict Flow**: Detection, analysis, feedback
+- **Feedback Flow**: Solution selection, custom feedback
 
-#### Executar:
+#### Execute:
 ```bash
 cd e2e-tests
 npm install
@@ -66,82 +66,82 @@ npx playwright install
 npx playwright test
 ```
 
-## 🚀 Execução dos Testes
+## 🚀 Test Execution
 
-### Desenvolvimento Local
+### Local Development
 
 ```bash
-# Testes unitários e integração
+# Unit and integration tests
 cd backend
 pytest --cov=app --cov-report=html --cov-report=term-missing
 
-# Testes E2E
+# E2E tests
 cd e2e-tests
 npx playwright test --headed
 ```
 
 ### CI/CD Pipeline
 
-Os testes são executados automaticamente no GitHub Actions:
+Tests are automatically executed in GitHub Actions:
 
-1. **Testes Backend**: Unitários + Integração
-2. **Testes Frontend**: Jest + React Testing Library
-3. **Testes E2E**: Playwright (apenas em main/master)
-4. **Verificação de Cobertura**: Falhará se < 80%
+1. **Backend Tests**: Unit + Integration
+2. **Frontend Tests**: Jest + React Testing Library
+3. **E2E Tests**: Playwright (only on main/master)
+4. **Coverage Verification**: Will fail if < 80%
 
-## 🎯 Jornada Completa do Usuário (E2E)
+## 🎯 Complete User Journey (E2E)
 
-### Cenário Principal Testado:
+### Main Tested Scenario:
 
-1. **Fazer login** na plataforma
-2. **Criar um novo projeto** BIM
-3. **Fazer upload de arquivo IFC**
-4. **Aguardar processamento** assíncrono
-5. **Visualizar modelo 3D** processado
-6. **Clicar em issue de colisão** identificada
-7. **Visualizar soluções prescritivas**
-8. **Selecionar ou descrever solução**
-9. **Fornecer feedback** sobre eficácia
-10. **Marcar issue como resolvida**
+1. **Login** to the platform
+2. **Create a new BIM project**
+3. **Upload IFC file**
+4. **Wait for asynchronous processing**
+5. **View processed 3D model**
+6. **Click on identified collision issue**
+7. **View prescriptive solutions**
+8. **Select or describe solution**
+9. **Provide feedback** on effectiveness
+10. **Mark issue as resolved**
 
-## 📋 Fixtures e Dados de Teste
+## 📋 Fixtures and Test Data
 
 ### Backend Fixtures (`backend/tests/factories.py`)
 
-Utilizamos **Factory Boy** para criar dados de teste consistentes:
+We use **Factory Boy** to create consistent test data:
 
-- `UserFactory`: Usuários de teste
-- `ProjectFactory`: Projetos de teste
-- `ConflictFactory`: Conflitos simulados
-- `SolutionFactory`: Soluções prescritivas
-- `SolutionFeedbackFactory`: Feedback de usuários
+- `UserFactory`: Test users
+- `ProjectFactory`: Test projects
+- `ConflictFactory`: Simulated conflicts
+- `SolutionFactory`: Prescriptive solutions
+- `SolutionFeedbackFactory`: User feedback
 
 ### E2E Fixtures (`e2e-tests/fixtures/`)
 
-- `test-model.ifc`: Modelo IFC válido para testes
-- Dados de usuário padronizados
-- Cenários de conflitos pré-definidos
+- `test-model.ifc`: Valid IFC model for testing
+- Standardized user data
+- Pre-defined conflict scenarios
 
-## 🔧 Configuração do Ambiente de Testes
+## 🔧 Test Environment Configuration
 
 ### Backend
 
-- **Banco de Dados**: SQLite em memória para velocidade
-- **Autenticação**: Mock de usuários e tokens
-- **Processamento**: Mock de tarefas Celery
-- **Uploads**: Arquivos temporários
+- **Database**: In-memory SQLite for speed
+- **Authentication**: Mock users and tokens
+- **Processing**: Mock Celery tasks
+- **Uploads**: Temporary files
 
 ### Frontend
 
-- **Servidor Local**: Iniciado automaticamente
-- **Navegadores**: Chrome, Firefox, Safari, Mobile
-- **Dados**: Reset entre testes
+- **Local Server**: Started automatically
+- **Browsers**: Chrome, Firefox, Safari, Mobile
+- **Data**: Reset between tests
 
-## 📊 Métricas de Qualidade
+## 📊 Quality Metrics
 
-### Cobertura por Módulo:
+### Coverage by Module:
 
-| Módulo | Meta | Atual |
+| Module | Target | Current |
 |---------|------|-------|
 | `rules_engine.py` | 90% | ✅ |
 | `auth.py` | 85% | ✅ |
@@ -149,71 +149,71 @@ Utilizamos **Factory Boy** para criar dados de teste consistentes:
 | `database.py` | 75% | ✅ |
 | `bim_processor.py` | 70% | ✅ |
 
-### Tempo de Execução:
+### Execution Time:
 
-- **Testes Unitários**: < 30 segundos
-- **Testes Integração**: < 2 minutos
-- **Testes E2E**: < 10 minutos
+- **Unit Tests**: < 30 seconds
+- **Integration Tests**: < 2 minutes
+- **E2E Tests**: < 10 minutes
 
-## 🚫 Critérios de Falha
+## 🚫 Failure Criteria
 
-### Pull Request será bloqueado se:
+### Pull Request will be blocked if:
 
-1. **Cobertura < 80%**
-2. **Testes falhando**
+1. **Coverage < 80%**
+2. **Failing tests**
 3. **Linting errors**
-4. **Testes E2E instáveis**
+4. **Unstable E2E tests**
 
-## 🔄 Manutenção dos Testes
+## 🔄 Test Maintenance
 
-### Responsabilidades:
+### Responsibilities:
 
-- **Desenvolvedores**: Criar testes para novas funcionalidades
-- **Code Review**: Verificar qualidade dos testes
-- **CI/CD**: Executar testes automaticamente
-- **Monitoramento**: Acompanhar tendências de cobertura
+- **Developers**: Create tests for new features
+- **Code Review**: Verify test quality
+- **CI/CD**: Execute tests automatically
+- **Monitoring**: Track coverage trends
 
-### Boas Práticas:
+### Best Practices:
 
-1. **Testes devem ser independentes**
-2. **Dados de teste isolados**
-3. **Nomes descritivos**
-4. **Cleanup automático**
-5. **Mock de dependências externas**
+1. **Tests should be independent**
+2. **Isolated test data**
+3. **Descriptive names**
+4. **Automatic cleanup**
+5. **Mock external dependencies**
 
-## 📚 Comandos Úteis
+## 📚 Useful Commands
 
 ```bash
-# Executar todos os testes
+# Run all tests
 pytest
 
-# Executar com cobertura
+# Run with coverage
 pytest --cov=app --cov-report=html
 
-# Executar testes específicos
+# Run specific tests
 pytest tests/unit/test_rules_engine.py::TestRulesEngine::test_specific_function
 
-# Executar testes em paralelo
+# Run tests in parallel
 pytest -n auto
 
-# Executar testes E2E específicos
+# Run specific E2E tests
 npx playwright test tests/auth.spec.js
 
-# Executar testes E2E em modo debug
+# Run E2E tests in debug mode
 npx playwright test --debug
 
-# Gerar relatório de cobertura
+# Generate coverage report
 pytest --cov=app --cov-report=html && open htmlcov/index.html
 ```
 
-## 🎯 Próximos Passos
+## 🎯 Next Steps
 
-1. **Implementar testes de performance**
-2. **Adicionar testes de segurança**
-3. **Expandir cobertura para 90%**
-4. **Implementar testes de carga**
-5. **Adicionar testes de acessibilidade**
+1. **Implement performance tests**
+2. **Add security tests**
+3. **Expand coverage to 90%**
+4. **Implement load tests**
+5. **Add accessibility tests**
 
 ---
 
-**Lembre-se**: Testes são investimento em qualidade e confiança. Cada teste escrito hoje economiza horas de debug amanhã! 🚀
+**Remember**: Tests are an investment in quality and confidence. Every test written today saves hours of debugging tomorrow! 🚀

@@ -14,6 +14,6 @@ test('renders Vitruvius header', () => {
 
 test('renders dashboard component', () => {
   render(<App />);
-  const dashboardElement = screen.getByText(/Plataforma de Coordenação de Projetos BIM com Motor de Análise Prescritiva/i);
+  const dashboardElement = screen.getByText(/BIM Project Coordination Platform with Prescriptive Analysis Engine/i);
   expect(dashboardElement).toBeInTheDocument();
 });

@@ -14,7 +14,7 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>Vitruvius</h1>
-        <p>Plataforma de Coordenação de Projetos BIM com Motor de Análise Prescritiva</p>
+        <p>BIM Project Coordination Platform with Prescriptive Analysis Engine</p>
       </header>
       
       <main>

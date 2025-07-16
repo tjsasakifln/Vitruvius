@@ -139,8 +139,8 @@ function Dashboard() {
       </div>
 
       <div>
-        <h2>Recomendações do Motor de Análise Prescritiva</h2>
-        <p>Soluções prescritivas do Motor de Análise Prescritiva aparecerão aqui quando conflitos forem detectados.</p>
+        <h2>Prescriptive Analysis Engine Recommendations</h2>
+        <p>Prescriptive solutions from the Analysis Engine will appear here when conflicts are detected.</p>
         <p><strong>Importante:</strong> Após revisar as soluções sugeridas, por favor forneça feedback sobre qual solução você implementou. Isso nos ajuda a melhorar nosso sistema!</p>
       </div>
     </div>

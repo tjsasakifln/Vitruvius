@@ -2,7 +2,7 @@
 
 **AI-Powered SaaS Platform for BIM Project Coordination and Conflict Resolution**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![React 18+](https://img.shields.io/badge/react-18.0+-61DAFB.svg)](https://reactjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
@@ -195,7 +195,9 @@ Complete API documentation is available at:
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+This project is licensed under the Business Source License 1.1 (BSL 1.1).
+
+**⚠️ COMMERCIAL USE NOTICE**: Commercial use of this software is strictly prohibited without explicit written authorization. For commercial licensing, please contact Tiago Sasaki at tiago@confenge.com.br.
 
 ## 🏢 Roadmap
 

@@ -1,6 +1,6 @@
 {
   "short_name": "Vitruvius",
-  "name": "Vitruvius - Plataforma BIM com Motor de Análise Prescritiva",
+  "name": "Vitruvius - BIM Platform with Prescriptive Analysis Engine",
   "icons": [
     {
       "src": "favicon.ico",
@@ -12,5 +12,5 @@
   "display": "standalone",
   "theme_color": "#000000",
   "background_color": "#ffffff",
-  "description": "Plataforma SaaS com Motor de Análise Prescritiva para Coordenação de Projetos BIM e Resolução de Conflitos"
+  "description": "SaaS Platform with Prescriptive Analysis Engine for BIM Project Coordination and Conflict Resolution"
 }

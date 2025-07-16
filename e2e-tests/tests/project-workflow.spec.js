@@ -57,7 +57,7 @@ test.describe('Complete Project Workflow', () => {
     
     // Verify conflict details are shown
     await expect(page.locator('[data-testid="conflict-details"]')).toBeVisible();
-    await expect(page.locator('text=Recomendações do Motor de Análise Prescritiva')).toBeVisible();
+    await expect(page.locator('text=Prescriptive Analysis Engine Recommendations')).toBeVisible();
     
     // Step 7: View prescriptive solutions
     await expect(page.locator('[data-testid="solution-list"]')).toBeVisible();
@@ -73,7 +73,7 @@ test.describe('Complete Project Workflow', () => {
     await page.click('[data-testid="submit-feedback-button"]');
     
     // Verify feedback submission
-    await expect(page.locator('text=Feedback enviado com sucesso')).toBeVisible();
+    await expect(page.locator('text=Feedback submitted successfully')).toBeVisible();
     
     // Step 10: Mark conflict as resolved
     await page.click('[data-testid="mark-resolved-button"]');
@@ -112,7 +112,7 @@ test.describe('Complete Project Workflow', () => {
     await page.click('[data-testid="submit-feedback-button"]');
     
     // Verify success
-    await expect(page.locator('text=Feedback enviado com sucesso')).toBeVisible();
+    await expect(page.locator('text=Feedback submitted successfully')).toBeVisible();
   });
 
   test('user can navigate between multiple projects', async ({ page }) => {

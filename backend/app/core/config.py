@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/vitruvius_db"
+    TEST_DATABASE_URL: str = "postgresql://user:password@localhost:5432/vitruvius_test_db"
     
     # Celery/Redis
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"

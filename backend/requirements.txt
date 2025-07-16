@@ -10,3 +10,9 @@ pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+pytest
+pytest-asyncio
+pytest-cov
+pytest-mock
+httpx
+factory-boy

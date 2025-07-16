@@ -1,0 +1,21 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'), '2;1');
+FILE_NAME('test-model.ifc', '2024-01-01T00:00:00', ('E2E Test'), ('Vitruvius'), 'Test Model', 'Test', '');
+FILE_SCHEMA(('IFC2X3'));
+ENDSEC;
+DATA;
+/* Test IFC model for E2E testing */
+#1 = IFCPROJECT('0001', $, 'Test BIM Project', 'A test project for E2E testing', $, $, $, $, $);
+#2 = IFCBUILDING('0002', $, 'Test Building', 'Main building', $, $, $, $, $, $, $, $);
+#3 = IFCBUILDINGSTOREY('0003', $, 'Ground Floor', 'Ground floor level', $, $, $, $, $, 0.0);
+#4 = IFCWALL('0004', $, 'Wall-001', 'Concrete wall', $, $, $, $, $);
+#5 = IFCCOLUMN('0005', $, 'Column-001', 'Steel column', $, $, $, $, $);
+#6 = IFCBEAM('0006', $, 'Beam-001', 'Steel beam', $, $, $, $, $);
+#7 = IFCDOOR('0007', $, 'Door-001', 'Entry door', $, $, $, $, $, $, $);
+/* Relationships */
+#100 = IFCRELAGGREGATES('0100', $, $, $, #1, (#2));
+#101 = IFCRELAGGREGATES('0101', $, $, $, #2, (#3));
+#102 = IFCRELCONTAINEDINSPATIALSTRUCTURE('0102', $, $, $, (#4, #5, #6, #7), #3);
+ENDSEC;
+END-ISO-10303-21;

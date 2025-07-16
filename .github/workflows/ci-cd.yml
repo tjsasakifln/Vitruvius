@@ -51,7 +51,7 @@ jobs:
     - name: Run Backend Tests
       run: |
         cd backend
-        pytest --cov=app --cov-report=xml --cov-report=term-missing
+        pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=80
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -85,6 +85,26 @@ jobs:
       run: |
         cd frontend
         npm run build
+
+    - name: Run E2E Tests
+      run: |
+        cd e2e-tests
+        npm ci
+        npx playwright install --with-deps
+        npx playwright test
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          backend/htmlcov/
+          backend/coverage.xml
+          e2e-tests/test-results/
+          e2e-tests/playwright-report/
+        retention-days: 30
 
   build-and-push:
     needs: test

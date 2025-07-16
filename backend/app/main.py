@@ -1,12 +1,15 @@
 from fastapi import FastAPI
+from .api.v1.endpoints import projects
 
-app = FastAPI(title="Vitruvius Backend")
+app = FastAPI(
+    title="Vitruvius API",
+    description="AI-Powered SaaS Platform for BIM Project Coordination",
+    version="1.0.0"
+)
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Vitruvius API"}
 
-# Include routers from app/api here
-# from .api import users, projects
-# app.include_router(users.router)
-# app.include_router(projects.router)
+# Include API routers
+app.include_router(projects.router, prefix="/api")

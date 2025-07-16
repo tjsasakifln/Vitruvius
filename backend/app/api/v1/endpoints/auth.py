@@ -10,23 +10,27 @@ from ....db.models.project import User
 
 router = APIRouter()
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str = None
 
+
 class UserResponse(BaseModel):
     id: int
     email: str
     full_name: str
     is_active: bool
-    
+
     class Config:
         from_attributes = True
+
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
@@ -48,6 +52,7 @@ async def login_for_access_token(
     )
     
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @router.post("/register", response_model=UserResponse)
 async def register_user(
@@ -72,6 +77,7 @@ async def register_user(
     )
     
     return user
+
 
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(

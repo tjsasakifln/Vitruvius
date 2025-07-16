@@ -14,3 +14,4 @@ def read_root():
 # Include API routers
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
+

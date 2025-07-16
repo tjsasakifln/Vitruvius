@@ -16,6 +16,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 UPLOAD_DIR = "/app/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
 @router.get("/", response_model=List[dict])
 def get_projects(
     current_user: User = Depends(get_current_active_user),
@@ -24,6 +25,7 @@ def get_projects(
     """Get all projects for current user"""
     projects = db.query(Project).filter(Project.owner_id == current_user.id).all()
     return [{"id": p.id, "name": p.name, "status": p.status, "created_at": p.created_at} for p in projects]
+
 
 @router.post("/", response_model=dict)
 def create_project(
@@ -42,6 +44,7 @@ def create_project(
     db.commit()
     db.refresh(project)
     return {"id": project.id, "name": project.name, "status": project.status}
+
 
 @router.post("/{project_id}/upload-ifc")
 async def upload_ifc_model(
@@ -96,6 +99,7 @@ async def upload_ifc_model(
         "file_path": file_path
     }
 
+
 @router.get("/{project_id}/conflicts")
 def get_project_conflicts(
     project_id: int,
@@ -128,6 +132,7 @@ def get_project_conflicts(
             for c in conflicts
         ]
     }
+
 
 @router.get("/{project_id}/conflicts/{conflict_id}/solutions")
 def get_conflict_solutions(
@@ -171,6 +176,7 @@ def get_conflict_solutions(
             for s in solutions
         ]
     }
+
 
 @router.post("/{project_id}/conflicts/{conflict_id}/feedback")
 def submit_solution_feedback(

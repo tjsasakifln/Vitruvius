@@ -78,11 +78,11 @@ class BIMProcessor:
                             "vertices": len(shape.geometry.verts) // 3,
                             "faces": len(shape.geometry.faces) // 3
                         }
-                    except:
+                    except Exception:
                         element_data["has_geometry"] = False
                     
                     elements.append(element_data)
-                except Exception as e:
+                except Exception:
                     continue
         
         return elements
@@ -135,8 +135,8 @@ class BIMProcessor:
         
         return structure
 
+
 def process_ifc_file(file_path: str) -> Dict[str, Any]:
     """Main function to process IFC file"""
     processor = BIMProcessor()
     return processor.process_ifc_file(file_path)
-

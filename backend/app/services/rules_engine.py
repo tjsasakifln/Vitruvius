@@ -342,3 +342,4 @@ def run_prescriptive_analysis(bim_data: Dict[str, Any]) -> Dict[str, Any]:
         "conflicts_found": len(results),
         "analysis_results": results
     }
+

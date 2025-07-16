@@ -446,3 +446,4 @@ def get_conflict_id_by_elements(db, project_id, elements):
     ).first()
     
     return conflict.id if conflict else None
+

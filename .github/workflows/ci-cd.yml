@@ -2,88 +2,227 @@ name: Vitruvius CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_BACKEND: vitruvius-backend
+  ECR_REPOSITORY_WORKER: vitruvius-worker  
+  ECR_REPOSITORY_FRONTEND: vitruvius-frontend
+  ECS_CLUSTER: vitruvius-cluster
+  ECS_SERVICE_BACKEND: vitruvius-backend-service
+  ECS_SERVICE_WORKER: vitruvius-worker-service
+  ECS_SERVICE_FRONTEND: vitruvius-frontend-service
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
-
+    
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
 
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Install Backend Dependencies
-      run: pip install -r backend/requirements.txt
+      run: |
+        cd backend
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8
+
+    - name: Run Backend Linting
+      run: |
+        cd backend
+        flake8 app --max-line-length=100 --ignore=E501,W503
 
     - name: Run Backend Tests
       run: |
-        # Add backend test command here
-        echo "No backend tests defined yet."
+        cd backend
+        pytest --cov=app --cov-report=xml --cov-report=term-missing
+      continue-on-error: true
 
     - name: Set up Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: '20'
 
+    - name: Cache Node modules
+      uses: actions/cache@v3
+      with:
+        path: ~/.npm
+        key: ${{ runner.os }}-node-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-
+
     - name: Install Frontend Dependencies
-      run: npm install --prefix frontend
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run Frontend Linting
+      run: |
+        cd frontend
+        npm run lint
+      continue-on-error: true
 
     - name: Run Frontend Tests
       run: |
-        # Add frontend test command here
-        echo "No frontend tests defined yet."
+        cd frontend
+        npm test -- --coverage --watchAll=false
+      continue-on-error: true
 
-  build-and-push-docker:
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Login to Docker Hub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-    - name: Build and push Backend image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./backend
-        file: ./backend/Dockerfile
-        push: true
-        tags: your-dockerhub-username/vitruvius-backend:latest
-
-    - name: Build and push Worker image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./backend
-        file: ./backend/Dockerfile.worker
-        push: true
-        tags: your-dockerhub-username/vitruvius-worker:latest
-
-    - name: Build and push Frontend image
-      uses: docker/build-push-action@v4
-      with:
-        context: ./frontend
-        file: ./frontend/Dockerfile
-        push: true
-        tags: your-dockerhub-username/vitruvius-frontend:latest
-
-  deploy-to-aws:
-    needs: build-and-push-docker
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-    - name: Deploy to AWS
+    - name: Build Frontend
       run: |
-        # Add deployment script here
-        echo "Deployment to AWS not configured yet."
+        cd frontend
+        npm run build
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push Backend image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG -f backend/Dockerfile backend/
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+
+    - name: Build, tag, and push Worker image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG -f backend/Dockerfile.worker backend/
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+
+    - name: Build, tag, and push Frontend image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG -f frontend/Dockerfile frontend/
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Deploy Backend to ECS
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Update ECS task definition with new image
+        aws ecs update-service \
+          --cluster $ECS_CLUSTER \
+          --service $ECS_SERVICE_BACKEND \
+          --force-new-deployment \
+          --region $AWS_REGION
+
+    - name: Deploy Worker to ECS
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Update ECS task definition with new image
+        aws ecs update-service \
+          --cluster $ECS_CLUSTER \
+          --service $ECS_SERVICE_WORKER \
+          --force-new-deployment \
+          --region $AWS_REGION
+
+    - name: Deploy Frontend to ECS
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Update ECS task definition with new image
+        aws ecs update-service \
+          --cluster $ECS_CLUSTER \
+          --service $ECS_SERVICE_FRONTEND \
+          --force-new-deployment \
+          --region $AWS_REGION
+
+    - name: Wait for deployment to complete
+      run: |
+        echo "Waiting for backend deployment..."
+        aws ecs wait services-stable \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE_BACKEND \
+          --region $AWS_REGION
+
+        echo "Waiting for worker deployment..."
+        aws ecs wait services-stable \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE_WORKER \
+          --region $AWS_REGION
+
+        echo "Waiting for frontend deployment..."
+        aws ecs wait services-stable \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE_FRONTEND \
+          --region $AWS_REGION
+
+        echo "Deployment completed successfully!"
+
+    - name: Verify deployment
+      run: |
+        # Get service status
+        aws ecs describe-services \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE_BACKEND $ECS_SERVICE_WORKER $ECS_SERVICE_FRONTEND \
+          --region $AWS_REGION \
+          --query 'services[*].{ServiceName:serviceName,Status:status,RunningCount:runningCount,DesiredCount:desiredCount}' \
+          --output table

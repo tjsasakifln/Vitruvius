@@ -70,11 +70,11 @@ Vitruvius is a revolutionary platform for the AEC (Architecture, Engineering, an
    ```
 
 3. **Access the application:**
-   - 🌐 **Frontend:** http://localhost:3000
-   - 🔧 **API Backend:** http://localhost:8000
-   - 📊 **API Documentation:** http://localhost:8000/docs
-   - 🗄️ **PostgreSQL:** localhost:5432
-   - 🔄 **Redis:** localhost:6379
+   - 🌐 **Frontend:** Port 3000
+   - 🔧 **API Backend:** Port 8000
+   - 📊 **API Documentation:** /docs endpoint
+   - 🗄️ **PostgreSQL:** Port 5432
+   - 🔄 **Redis:** Port 6379
 
 ## 📋 Features
 
@@ -106,20 +106,20 @@ Vitruvius is a revolutionary platform for the AEC (Architecture, Engineering, an
 
 ### Create Project
 ```bash
-curl -X POST "http://localhost:8000/api/projects" \
+curl -X POST "/api/projects" \
   -H "Content-Type: application/json" \
   -d '{"name": "My Project", "description": "Project description"}'
 ```
 
 ### Upload IFC Model
 ```bash
-curl -X POST "http://localhost:8000/api/projects/1/upload-ifc" \
+curl -X POST "/api/projects/1/upload-ifc" \
   -F "file=@model.ifc"
 ```
 
 ### Query Conflicts
 ```bash
-curl -X GET "http://localhost:8000/api/projects/1/conflicts"
+curl -X GET "/api/projects/1/conflicts"
 ```
 
 ## 🔧 Development
@@ -174,8 +174,8 @@ npm test --prefix frontend
 ## 📚 API Documentation
 
 Complete API documentation is available at:
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
+- **Swagger UI:** /docs endpoint on the API server
+- **ReDoc:** /redoc endpoint on the API server
 
 ### Main Endpoints
 
@@ -195,7 +195,7 @@ Complete API documentation is available at:
 
 ## 📄 License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
 
 ## 🏢 Roadmap
 

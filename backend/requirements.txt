@@ -5,6 +5,10 @@ psycopg2-binary
 celery
 redis
 ifcopenshell
+pygltflib
+trimesh
+requests
+authlib
 pydantic
 pydantic-settings
 python-jose[cryptography]

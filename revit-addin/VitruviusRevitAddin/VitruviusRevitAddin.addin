@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Vitruvius</Name>
+    <Assembly>VitruviusRevitAddin.dll</Assembly>
+    <FullClassName>VitruviusRevitAddin.VitruviusApplication</FullClassName>
+    <ClientId>12345678-1234-1234-1234-123456789012</ClientId>
+    <VendorId>VITR</VendorId>
+    <VendorDescription>Vitruvius - Intelligent BIM Clash Detection</VendorDescription>
+    <Description>Intelligent BIM clash detection and resolution for Revit models. Send your models to Vitruvius for advanced conflict analysis and AI-powered solution suggestions.</Description>
+    <VisibilityMode>NotVisibleInFamily</VisibilityMode>
+    <Discipline>Any</Discipline>
+    <LanguageType>Unknown</LanguageType>
+  </AddIn>
+</RevitAddIns>

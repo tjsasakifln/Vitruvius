@@ -1,3 +1,6 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker

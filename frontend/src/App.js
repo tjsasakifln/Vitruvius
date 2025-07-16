@@ -1,3 +1,8 @@
+/*
+ * Production use requires a separate commercial license from the Licensor.
+ * For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+ */
+
 import React from 'react';
 import Dashboard from './components/Dashboard';
 import UploadForm from './components/UploadForm';

@@ -1,3 +1,8 @@
+/*
+ * Production use requires a separate commercial license from the Licensor.
+ * For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+ */
+
 import React, { useState, useEffect } from 'react';
 import SolutionFeedback from './SolutionFeedback';
 
@@ -20,7 +25,6 @@ function Dashboard() {
       const data = await response.json();
       setProjects(data);
       
-      // Fetch conflicts for the first project if available
       if (data.length > 0) {
         setSelectedProject(data[0].id);
         await fetchConflicts(data[0].id);
@@ -35,7 +39,6 @@ function Dashboard() {
 
   const fetchConflicts = async (projectId = null) => {
     try {
-      // Use first project ID if none specified
       const targetProjectId = projectId || (projects.length > 0 ? projects[0].id : 1);
       
       const response = await fetch(`/api/projects/${targetProjectId}/conflicts`);
@@ -48,7 +51,6 @@ function Dashboard() {
       setLoading(false);
     } catch (error) {
       console.error('Error fetching conflicts:', error);
-      // Fallback to empty conflicts array
       setConflicts([]);
       setLoading(false);
     }
@@ -124,7 +126,6 @@ function Dashboard() {
                   <p><strong>Detected:</strong> {new Date(conflict.created_at).toLocaleDateString()}</p>
                 )}
                 
-                {/* Componente de Feedback para cada conflito */}
                 <SolutionFeedback 
                   projectId={selectedProject} 
                   conflictId={conflict.id} 

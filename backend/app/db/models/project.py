@@ -1,4 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Table, Boolean
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Table, Boolean, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -37,6 +40,8 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text)
     status = Column(String(50), default="created")
+    aps_project_id = Column(String(255))  # APS project ID for integration
+    aps_hub_id = Column(String(255))      # APS hub ID for integration
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -44,6 +49,20 @@ class Project(Base):
     owner = relationship("User", back_populates="projects")
     ifc_models = relationship("IFCModel", back_populates="project")
     conflicts = relationship("Conflict", back_populates="project")
+    costs = relationship("ProjectCost", back_populates="project")
+
+class ProjectCost(Base):
+    __tablename__ = "project_costs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    parameter_name = Column(String(100), index=True, nullable=False)  # Ex: "CONCRETE_M3", "STEEL_KG", "LABOR_HOUR"
+    cost = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    project = relationship("Project", back_populates="costs")
 
 class IFCModel(Base):
     __tablename__ = "ifc_models"
@@ -52,6 +71,8 @@ class IFCModel(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500))
+    gltf_path = Column(String(500))  # Path to converted glTF file
+    xkt_path = Column(String(500))   # Path to converted XKT file
     status = Column(String(50), default="uploaded")
     processed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -86,6 +107,7 @@ class Conflict(Base):
     severity = Column(String(20), default="medium")
     description = Column(Text)
     status = Column(String(50), default="detected")
+    aps_issue_id = Column(String(255))  # APS issue ID for integration
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -103,7 +125,7 @@ class Solution(Base):
     description = Column(Text)
     estimated_cost = Column(Integer)  # in cents
     estimated_time = Column(Integer)  # in days
-    confidence_score = Column(Integer)  # 0-100
+    confidence_score = Column(Float, default=1.0, nullable=False)  # 0.0-1.0
     status = Column(String(50), default="proposed")
     created_at = Column(DateTime, default=datetime.utcnow)
     

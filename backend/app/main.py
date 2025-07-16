@@ -1,3 +1,6 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 from fastapi import FastAPI
 from .api.v1.endpoints import projects, auth
 
@@ -14,4 +17,3 @@ def read_root():
 # Include API routers
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
-

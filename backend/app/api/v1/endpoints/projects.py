@@ -1,14 +1,18 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from sqlalchemy.orm import Session
 from typing import List
 import os
 import uuid
 from datetime import datetime
-from ...db.models.project import Project, IFCModel, Conflict, User, Solution, SolutionFeedback
+from ...db.models.project import Project, IFCModel, Conflict, User, Solution, SolutionFeedback, ProjectCost
 from ...db.database import get_db
 from ...services.bim_processor import process_ifc_file
-from ...tasks.process_ifc import process_ifc_task
+from ...tasks.process_ifc import process_ifc_task, convert_ifc_to_gltf, convert_ifc_to_xkt, run_inter_model_clash_detection
 from ...auth.dependencies import get_current_active_user
+from ...services.rules_engine import suggest_solutions_for_conflict, create_solution_from_rules
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -92,9 +96,20 @@ async def upload_ifc_model(
     # Start async processing
     task = process_ifc_task.delay(project_id, file_path)
     
+    # Generate paths for converted files
+    file_base = os.path.splitext(unique_filename)[0]
+    gltf_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.gltf")
+    xkt_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.xkt")
+    
+    # Start conversion tasks
+    gltf_task = convert_ifc_to_gltf.delay(file_path, gltf_path, project_id)
+    xkt_task = convert_ifc_to_xkt.delay(file_path, xkt_path, project_id)
+    
     return {
         "message": "IFC file uploaded successfully",
         "task_id": task.id,
+        "gltf_task_id": gltf_task.id,
+        "xkt_task_id": xkt_task.id,
         "model_id": ifc_model.id,
         "file_path": file_path
     }
@@ -158,7 +173,15 @@ def get_conflict_solutions(
     if not conflict:
         raise HTTPException(status_code=404, detail="Conflict not found")
     
-    solutions = db.query(Solution).filter(Solution.conflict_id == conflict_id).all()
+    # Get solutions prioritized by confidence score
+    solutions = db.query(Solution).filter(Solution.conflict_id == conflict_id).order_by(Solution.confidence_score.desc()).all()
+    
+    # Also get suggested solutions from similar conflicts in the same project
+    similar_solutions = suggest_solutions_for_conflict(conflict_id, project_id, db)
+    
+    # Filter out duplicates from similar solutions
+    existing_solution_ids = {s.id for s in solutions}
+    unique_similar_solutions = [s for s in similar_solutions if s["id"] not in existing_solution_ids]
     
     return {
         "conflict_id": conflict_id,
@@ -174,7 +197,8 @@ def get_conflict_solutions(
                 "created_at": s.created_at
             }
             for s in solutions
-        ]
+        ],
+        "suggested_solutions": unique_similar_solutions
     }
 
 
@@ -248,9 +272,275 @@ def submit_solution_feedback(
         db.refresh(feedback)
         feedback_id = feedback.id
     
+    # Update solution confidence score based on feedback
+    if solution_id and feedback_type == "selected_suggested":
+        solution = db.query(Solution).filter(Solution.id == solution_id).first()
+        if solution:
+            effectiveness_rating = feedback_data.get("effectiveness_rating", 3)  # Default to neutral
+            
+            # Adjust confidence based on effectiveness rating (1-5 scale)
+            if effectiveness_rating >= 4:  # Good/Excellent
+                solution.confidence_score = min(1.0, solution.confidence_score + 0.1)
+            elif effectiveness_rating <= 2:  # Poor/Bad
+                solution.confidence_score = max(0.1, solution.confidence_score - 0.1)
+            # Rating of 3 (neutral) doesn't change confidence
+            
+            db.commit()
+    
     return {
         "message": "Feedback submitted successfully",
         "feedback_id": feedback_id,
         "conflict_id": conflict_id,
         "feedback_type": feedback_type
+    }
+
+
+@router.get("/{project_id}/costs")
+def get_project_costs(
+    project_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get cost parameters for a project"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    costs = db.query(ProjectCost).filter(ProjectCost.project_id == project_id).all()
+    
+    return {
+        "project_id": project_id,
+        "costs": [
+            {
+                "id": c.id,
+                "parameter_name": c.parameter_name,
+                "cost": c.cost,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at
+            }
+            for c in costs
+        ]
+    }
+
+
+@router.post("/{project_id}/costs")
+def create_project_cost(
+    project_id: int,
+    cost_data: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Create or update a cost parameter for a project"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    parameter_name = cost_data.get("parameter_name")
+    cost = cost_data.get("cost")
+    
+    if not parameter_name or cost is None:
+        raise HTTPException(status_code=400, detail="parameter_name and cost are required")
+    
+    # Check if cost parameter already exists
+    existing_cost = db.query(ProjectCost).filter(
+        ProjectCost.project_id == project_id,
+        ProjectCost.parameter_name == parameter_name
+    ).first()
+    
+    if existing_cost:
+        # Update existing cost
+        existing_cost.cost = cost
+        existing_cost.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(existing_cost)
+        return {
+            "id": existing_cost.id,
+            "parameter_name": existing_cost.parameter_name,
+            "cost": existing_cost.cost,
+            "updated_at": existing_cost.updated_at
+        }
+    else:
+        # Create new cost parameter
+        new_cost = ProjectCost(
+            project_id=project_id,
+            parameter_name=parameter_name,
+            cost=cost
+        )
+        db.add(new_cost)
+        db.commit()
+        db.refresh(new_cost)
+        return {
+            "id": new_cost.id,
+            "parameter_name": new_cost.parameter_name,
+            "cost": new_cost.cost,
+            "created_at": new_cost.created_at
+        }
+
+
+@router.put("/{project_id}/costs/{cost_id}")
+def update_project_cost(
+    project_id: int,
+    cost_id: int,
+    cost_data: dict,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update a specific cost parameter"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    cost = db.query(ProjectCost).filter(
+        ProjectCost.id == cost_id,
+        ProjectCost.project_id == project_id
+    ).first()
+    if not cost:
+        raise HTTPException(status_code=404, detail="Cost parameter not found")
+    
+    new_cost_value = cost_data.get("cost")
+    if new_cost_value is None:
+        raise HTTPException(status_code=400, detail="cost is required")
+    
+    cost.cost = new_cost_value
+    cost.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(cost)
+    
+    return {
+        "id": cost.id,
+        "parameter_name": cost.parameter_name,
+        "cost": cost.cost,
+        "updated_at": cost.updated_at
+    }
+
+
+@router.delete("/{project_id}/costs/{cost_id}")
+def delete_project_cost(
+    project_id: int,
+    cost_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a cost parameter"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    cost = db.query(ProjectCost).filter(
+        ProjectCost.id == cost_id,
+        ProjectCost.project_id == project_id
+    ).first()
+    if not cost:
+        raise HTTPException(status_code=404, detail="Cost parameter not found")
+    
+    db.delete(cost)
+    db.commit()
+    
+    return {"message": "Cost parameter deleted successfully"}
+
+
+@router.get("/{project_id}/models")
+def get_project_models(
+    project_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get all IFC models for a project with their converted file paths"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    models = db.query(IFCModel).filter(IFCModel.project_id == project_id).all()
+    
+    return {
+        "project_id": project_id,
+        "models": [
+            {
+                "id": model.id,
+                "filename": model.filename,
+                "status": model.status,
+                "ifc_path": model.file_path,
+                "gltf_path": model.gltf_path,
+                "xkt_path": model.xkt_path,
+                "processed_at": model.processed_at,
+                "created_at": model.created_at
+            }
+            for model in models
+        ]
+    }
+
+
+@router.get("/{project_id}/models/{model_id}/gltf")
+def get_model_gltf(
+    project_id: int,
+    model_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get glTF file URL for a specific model"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    model = db.query(IFCModel).filter(
+        IFCModel.id == model_id,
+        IFCModel.project_id == project_id
+    ).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    if not model.gltf_path:
+        raise HTTPException(status_code=404, detail="glTF file not available")
+    
+    return {
+        "model_id": model_id,
+        "gltf_url": f"/static/models/{os.path.basename(model.gltf_path)}",
+        "status": model.status
+    }
+
+
+@router.post("/{project_id}/run-inter-model-clash-detection")
+def run_inter_model_clash_detection_endpoint(
+    project_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Run clash detection between multiple IFC models in a project"""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Check if project has multiple models
+    models_count = db.query(IFCModel).filter(IFCModel.project_id == project_id).count()
+    if models_count < 2:
+        raise HTTPException(status_code=400, detail="Project must have at least 2 IFC models for inter-model clash detection")
+    
+    # Start the clash detection task
+    task = run_inter_model_clash_detection.delay(project_id)
+    
+    return {
+        "message": "Inter-model clash detection started",
+        "task_id": task.id,
+        "project_id": project_id
     }

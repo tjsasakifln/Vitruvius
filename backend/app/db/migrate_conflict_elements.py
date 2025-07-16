@@ -1,3 +1,6 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 """
 Migration script to convert elements_involved field to proper Many-to-Many relationship
 This script handles the migration from the old string-based approach to the new junction table

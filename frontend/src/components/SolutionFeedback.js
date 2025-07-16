@@ -1,3 +1,8 @@
+/*
+ * Production use requires a separate commercial license from the Licensor.
+ * For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+ */
+
 import React, { useState, useEffect } from 'react';
 
 function SolutionFeedback({ projectId, conflictId }) {
@@ -76,7 +81,6 @@ function SolutionFeedback({ projectId, conflictId }) {
 
       if (response.ok) {
         alert('Feedback enviado com sucesso! Obrigado por contribuir para a melhoria do sistema.');
-        // Reset form
         setSelectedSolution(null);
         setCustomSolution('');
         setImplementationNotes('');

@@ -1,3 +1,6 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 

@@ -1,218 +1,217 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { IfcViewerAPI } from 'web-ifc-viewer';
-import { Color } from 'three';
+/*
+ * Production use requires a separate commercial license from the Licensor.
+ * For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+ */
 
-function Viewer3D({ modelUrl, onModelLoaded, onLoadingProgress, onError }) {
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+function Viewer3D({ gltfUrl, onModelLoaded, onLoadingProgress, onError }) {
   const viewerContainerRef = useRef(null);
-  const [viewer, setViewer] = useState(null);
-  const [worker, setWorker] = useState(null);
+  const [scene, setScene] = useState(null);
+  const [camera, setCamera] = useState(null);
+  const [renderer, setRenderer] = useState(null);
+  const [controls, setControls] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState('idle');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [selectedElement, setSelectedElement] = useState(null);
+  const [models, setModels] = useState([]);
 
-  // Initialize viewer and worker
   useEffect(() => {
-    if (viewerContainerRef.current && !viewer) {
+    if (viewerContainerRef.current && !scene) {
       const container = viewerContainerRef.current;
-      const newViewer = new IfcViewerAPI({ 
-        container, 
-        backgroundColor: new Color(0xf0f0f0) 
-      });
-      
-      // Setup viewer
-      newViewer.grid.setGrid();
-      newViewer.axes.setAxes();
-      newViewer.context.renderer.postProduction.active = true;
-      
-      // Setup lighting
-      newViewer.context.ifcCamera.cameraControls.setLookAt(10, 10, 10, 0, 0, 0);
-      
-      setViewer(newViewer);
+      const width = container.clientWidth;
+      const height = container.clientHeight;
 
-      // Initialize Web Worker
-      const ifcWorker = new Worker('/workers/ifcLoader.worker.js');
-      setWorker(ifcWorker);
+      const newScene = new THREE.Scene();
+      newScene.background = new THREE.Color(0xf0f0f0);
 
-      // Setup worker message handler
-      ifcWorker.onmessage = (e) => {
-        handleWorkerMessage(e, newViewer);
+      const newCamera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+      newCamera.position.set(10, 10, 10);
+
+      const newRenderer = new THREE.WebGLRenderer({ antialias: true });
+      newRenderer.setSize(width, height);
+      newRenderer.shadowMap.enabled = true;
+      newRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      newRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+      newRenderer.toneMappingExposure = 1;
+      container.appendChild(newRenderer.domElement);
+
+      const newControls = new OrbitControls(newCamera, newRenderer.domElement);
+      newControls.enableDamping = true;
+      newControls.dampingFactor = 0.05;
+      newControls.screenSpacePanning = false;
+      newControls.maxPolarAngle = Math.PI / 2;
+
+      const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+      newScene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(10, 10, 5);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      newScene.add(directionalLight);
+
+      const gridHelper = new THREE.GridHelper(20, 20);
+      newScene.add(gridHelper);
+
+      const axesHelper = new THREE.AxesHelper(5);
+      newScene.add(axesHelper);
+
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+
+      const handleClick = (event) => {
+        const rect = container.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, newCamera);
+        const intersects = raycaster.intersectObjects(newScene.children, true);
+
+        if (intersects.length > 0) {
+          const clickedObject = intersects[0].object;
+          if (clickedObject.userData && clickedObject.userData.elementData) {
+            setSelectedElement(clickedObject.userData.elementData);
+          }
+        } else {
+          setSelectedElement(null);
+        }
       };
 
-      // Initialize worker
-      ifcWorker.postMessage({ type: 'INIT' });
+      container.addEventListener('click', handleClick);
 
-      // Cleanup function
+      const animate = () => {
+        requestAnimationFrame(animate);
+        newControls.update();
+        newRenderer.render(newScene, newCamera);
+      };
+      animate();
+
+      const handleResize = () => {
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        newCamera.aspect = width / height;
+        newCamera.updateProjectionMatrix();
+        newRenderer.setSize(width, height);
+      };
+      window.addEventListener('resize', handleResize);
+
+      setScene(newScene);
+      setCamera(newCamera);
+      setRenderer(newRenderer);
+      setControls(newControls);
+
       return () => {
-        if (ifcWorker) {
-          ifcWorker.terminate();
+        container.removeEventListener('click', handleClick);
+        window.removeEventListener('resize', handleResize);
+        if (newRenderer) {
+          container.removeChild(newRenderer.domElement);
+          newRenderer.dispose();
         }
       };
     }
   }, [viewerContainerRef.current]);
 
-  // Handle worker messages
-  const handleWorkerMessage = useCallback((e, viewerInstance) => {
-    const { type, data, modelId, progress, geometryData, modelInfo, message } = e.data;
+  const loadGLTFModel = useCallback((url) => {
+    if (!scene) return;
 
-    switch (type) {
-      case 'INIT_SUCCESS':
-        setLoadingStatus('ready');
-        break;
+    setLoadingStatus('loading');
+    setLoadingProgress(0);
 
-      case 'LOADING_STARTED':
-        setLoadingStatus('loading');
-        setLoadingProgress(0);
-        if (onLoadingProgress) onLoadingProgress(0);
-        break;
+    const loader = new GLTFLoader();
+    
+    loader.load(
+      url,
+      (gltf) => {
+        models.forEach(model => {
+          scene.remove(model);
+        });
+        setModels([]);
 
-      case 'MODEL_LOADED':
-        setLoadingStatus('processing');
-        if (onModelLoaded) onModelLoaded(modelInfo);
-        break;
+        const model = gltf.scene;
+        
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            
+            child.userData.elementData = {
+              name: child.name || 'Unnamed Element',
+              type: child.material ? child.material.name : 'Unknown',
+              id: child.id,
+              uuid: child.uuid
+            };
+            
+            if (child.material) {
+              child.material.needsUpdate = true;
+            }
+          }
+        });
 
-      case 'GEOMETRY_PROGRESS':
-        setLoadingProgress(progress);
-        if (onLoadingProgress) onLoadingProgress(progress);
-        break;
+        scene.add(model);
+        setModels([model]);
 
-      case 'GEOMETRY_EXTRACTED':
-        renderGeometry(geometryData, viewerInstance);
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+        cameraZ *= 1.5;
+        
+        camera.position.set(center.x, center.y, center.z + cameraZ);
+        camera.lookAt(center);
+        
+        if (controls) {
+          controls.target.copy(center);
+          controls.update();
+        }
+
         setLoadingStatus('complete');
-        setLoadingProgress(1);
-        if (onLoadingProgress) onLoadingProgress(1);
-        break;
-
-      case 'ELEMENT_PROPERTIES':
-        setSelectedElement(data.properties);
-        break;
-
-      case 'ERROR':
+        setLoadingProgress(100);
+        
+        if (onModelLoaded) {
+          onModelLoaded({
+            elementsCount: model.children.length,
+            boundingBox: box,
+            center: center,
+            size: size
+          });
+        }
+      },
+      (progress) => {
+        const percentage = (progress.loaded / progress.total) * 100;
+        setLoadingProgress(percentage);
+        if (onLoadingProgress) {
+          onLoadingProgress(percentage);
+        }
+      },
+      (error) => {
+        console.error('Error loading glTF model:', error);
         setLoadingStatus('error');
-        console.error('IFC Worker Error:', message);
-        if (onError) onError(message);
-        break;
-
-      default:
-        console.warn('Unknown worker message type:', type);
-    }
-  }, [onModelLoaded, onLoadingProgress, onError]);
-
-  // Render geometry from worker
-  const renderGeometry = useCallback((geometryData, viewerInstance) => {
-    try {
-      // Clear existing geometry
-      viewerInstance.context.scene.remove(...viewerInstance.context.scene.children);
-
-      // Create meshes from geometry data
-      geometryData.objects.forEach((obj, index) => {
-        if (obj.vertices.length > 0 && obj.indices.length > 0) {
-          const geometry = new THREE.BufferGeometry();
-          
-          // Set vertices
-          const vertices = new Float32Array(obj.vertices);
-          geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-          
-          // Set indices
-          geometry.setIndex(obj.indices);
-          
-          // Compute normals
-          geometry.computeVertexNormals();
-          
-          // Create material
-          const material = new THREE.MeshLambertMaterial({
-            color: new THREE.Color(obj.color[0], obj.color[1], obj.color[2]),
-            transparent: true,
-            opacity: 0.8
-          });
-          
-          // Create mesh
-          const mesh = new THREE.Mesh(geometry, material);
-          mesh.userData = {
-            id: obj.id,
-            type: obj.type,
-            globalId: obj.globalId,
-            name: obj.name
-          };
-          
-          // Add click handler
-          mesh.addEventListener('click', () => {
-            handleElementClick(obj.id, obj.globalId);
-          });
-          
-          viewerInstance.context.scene.add(mesh);
+        if (onError) {
+          onError(`Failed to load 3D model: ${error.message}`);
         }
-      });
-
-      // Fit camera to model
-      viewerInstance.context.ifcCamera.cameraControls.fitToBox(
-        viewerInstance.context.scene, 
-        true
-      );
-
-    } catch (error) {
-      console.error('Error rendering geometry:', error);
-      if (onError) onError(`Rendering error: ${error.message}`);
-    }
-  }, [onError]);
-
-  // Handle element click
-  const handleElementClick = useCallback((elementId, globalId) => {
-    if (worker) {
-      worker.postMessage({
-        type: 'GET_ELEMENT_PROPERTIES',
-        data: {
-          modelID: 0, // Assuming single model for now
-          elementID: elementId,
-          modelId: 'current'
-        }
-      });
-    }
-  }, [worker]);
-
-  // Load model when URL changes
-  useEffect(() => {
-    if (modelUrl && worker && loadingStatus === 'ready') {
-      loadModel(modelUrl);
-    }
-  }, [modelUrl, worker, loadingStatus]);
-
-  const loadModel = async (url) => {
-    try {
-      setLoadingStatus('fetching');
-      
-      // Fetch model data
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: ${response.statusText}`);
       }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      
-      // Send to worker
-      worker.postMessage({
-        type: 'LOAD_MODEL',
-        data: {
-          modelData: uint8Array,
-          modelId: 'current'
-        }
-      });
-      
-    } catch (error) {
-      console.error('Error loading model:', error);
-      setLoadingStatus('error');
-      if (onError) onError(`Loading error: ${error.message}`);
-    }
-  };
+    );
+  }, [scene, camera, controls, models, onModelLoaded, onLoadingProgress, onError]);
 
-  // Render loading indicator
+  useEffect(() => {
+    if (gltfUrl && scene) {
+      loadGLTFModel(gltfUrl);
+    }
+  }, [gltfUrl, scene, loadGLTFModel]);
+
   const renderLoadingIndicator = () => {
-    if (loadingStatus === 'idle' || loadingStatus === 'ready') return null;
+    if (loadingStatus === 'idle' || loadingStatus === 'complete') return null;
 
     const statusMessages = {
-      fetching: 'Fetching model...',
-      loading: 'Loading IFC model...',
-      processing: 'Processing model data...',
+      loading: 'Loading 3D model...',
       error: 'Error loading model'
     };
 
@@ -222,37 +221,59 @@ function Viewer3D({ modelUrl, onModelLoaded, onLoadingProgress, onError }) {
         top: '50%',
         left: '50%',
         transform: 'translate(-50%, -50%)',
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        padding: '20px',
-        borderRadius: '8px',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        padding: '24px',
+        borderRadius: '12px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
         textAlign: 'center',
-        zIndex: 1000
+        zIndex: 1000,
+        minWidth: '250px'
       }}>
-        <div style={{ marginBottom: '10px' }}>
+        <div style={{ 
+          marginBottom: '16px',
+          fontSize: '16px',
+          fontWeight: '500',
+          color: '#333'
+        }}>
           {statusMessages[loadingStatus]}
         </div>
         
-        {loadingStatus !== 'error' && (
-          <div style={{
-            width: '200px',
-            height: '4px',
-            backgroundColor: '#e0e0e0',
-            borderRadius: '2px',
-            overflow: 'hidden'
-          }}>
+        {loadingStatus === 'loading' && (
+          <>
             <div style={{
-              width: `${loadingProgress * 100}%`,
-              height: '100%',
-              backgroundColor: '#007bff',
-              transition: 'width 0.3s ease'
-            }} />
-          </div>
+              width: '200px',
+              height: '6px',
+              backgroundColor: '#e0e0e0',
+              borderRadius: '3px',
+              overflow: 'hidden',
+              margin: '0 auto'
+            }}>
+              <div style={{
+                width: `${loadingProgress}%`,
+                height: '100%',
+                backgroundColor: '#007bff',
+                transition: 'width 0.3s ease',
+                borderRadius: '3px'
+              }} />
+            </div>
+            
+            <div style={{ 
+              marginTop: '12px', 
+              fontSize: '14px', 
+              color: '#666' 
+            }}>
+              {Math.round(loadingProgress)}%
+            </div>
+          </>
         )}
         
-        {loadingStatus !== 'error' && (
-          <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
-            {Math.round(loadingProgress * 100)}%
+        {loadingStatus === 'error' && (
+          <div style={{
+            color: '#dc3545',
+            fontSize: '14px',
+            marginTop: '8px'
+          }}>
+            Please check the model file and try again
           </div>
         )}
       </div>
@@ -268,17 +289,16 @@ function Viewer3D({ modelUrl, onModelLoaded, onLoadingProgress, onError }) {
       
       {renderLoadingIndicator()}
       
-      {/* Element properties panel */}
       {selectedElement && (
         <div style={{
           position: 'absolute',
-          top: '10px',
-          right: '10px',
-          width: '300px',
+          top: '20px',
+          right: '20px',
+          width: '320px',
           backgroundColor: 'white',
-          padding: '15px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          padding: '20px',
+          borderRadius: '12px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
           maxHeight: '400px',
           overflowY: 'auto',
           zIndex: 1000
@@ -287,45 +307,63 @@ function Viewer3D({ modelUrl, onModelLoaded, onLoadingProgress, onError }) {
             display: 'flex', 
             justifyContent: 'space-between', 
             alignItems: 'center',
-            marginBottom: '10px'
+            marginBottom: '16px'
           }}>
-            <h3 style={{ margin: 0 }}>Element Properties</h3>
+            <h3 style={{ 
+              margin: 0,
+              fontSize: '18px',
+              fontWeight: '600',
+              color: '#333'
+            }}>
+              Element Properties
+            </h3>
             <button 
               onClick={() => setSelectedElement(null)}
               style={{ 
                 background: 'none', 
                 border: 'none', 
-                fontSize: '20px',
-                cursor: 'pointer'
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#666',
+                padding: '0',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
               }}
             >
               ×
             </button>
           </div>
           
-          <div><strong>Name:</strong> {selectedElement.name || 'N/A'}</div>
-          <div><strong>Type:</strong> {selectedElement.type || 'N/A'}</div>
-          <div><strong>Global ID:</strong> {selectedElement.globalId || 'N/A'}</div>
+          <div style={{ marginBottom: '12px' }}>
+            <strong style={{ color: '#555' }}>Name:</strong> 
+            <span style={{ marginLeft: '8px' }}>{selectedElement.name || 'N/A'}</span>
+          </div>
           
-          {selectedElement.description && (
-            <div><strong>Description:</strong> {selectedElement.description}</div>
-          )}
+          <div style={{ marginBottom: '12px' }}>
+            <strong style={{ color: '#555' }}>Type:</strong> 
+            <span style={{ marginLeft: '8px' }}>{selectedElement.type || 'N/A'}</span>
+          </div>
           
-          {Object.keys(selectedElement.properties).length > 0 && (
-            <div style={{ marginTop: '15px' }}>
-              <strong>Properties:</strong>
-              {Object.entries(selectedElement.properties).map(([setName, props]) => (
-                <div key={setName} style={{ marginTop: '10px' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{setName}:</div>
-                  {Object.entries(props).map(([propName, propValue]) => (
-                    <div key={propName} style={{ marginLeft: '10px', fontSize: '12px' }}>
-                      {propName}: {propValue}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
+          <div style={{ marginBottom: '12px' }}>
+            <strong style={{ color: '#555' }}>ID:</strong> 
+            <span style={{ marginLeft: '8px', fontFamily: 'monospace', fontSize: '12px' }}>
+              {selectedElement.uuid || 'N/A'}
+            </span>
+          </div>
+          
+          <div style={{
+            marginTop: '16px',
+            padding: '12px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '8px',
+            fontSize: '12px',
+            color: '#666'
+          }}>
+            Click on other elements to inspect their properties
+          </div>
         </div>
       )}
     </div>

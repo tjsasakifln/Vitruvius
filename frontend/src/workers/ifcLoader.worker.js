@@ -1,3 +1,8 @@
+/*
+ * Production use requires a separate commercial license from the Licensor.
+ * For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+ */
+
 /* eslint-disable no-restricted-globals */
 import { IfcAPI } from 'web-ifc/web-ifc-api';
 
@@ -24,11 +29,9 @@ class IFCLoaderWorker {
     try {
       self.postMessage({ type: 'LOADING_STARTED', modelId });
 
-      // Open IFC model
       const model = await this.ifcAPI.OpenModel(modelData);
       this.models.set(modelId, model);
 
-      // Get model info
       const modelInfo = {
         modelID: model,
         name: await this.getModelName(model),
@@ -42,7 +45,6 @@ class IFCLoaderWorker {
         modelInfo 
       });
 
-      // Extract geometry progressively
       await this.extractGeometry(model, modelId);
 
     } catch (error) {
@@ -106,7 +108,6 @@ class IFCLoaderWorker {
         objects: []
       };
 
-      // Process elements in batches to prevent blocking
       const batchSize = 100;
       for (let i = 0; i < totalElements; i += batchSize) {
         const batch = [];
@@ -144,7 +145,6 @@ class IFCLoaderWorker {
               }
             }
           } catch (elementError) {
-            // Skip problematic elements
             continue;
           }
         }
@@ -155,7 +155,6 @@ class IFCLoaderWorker {
 
         processedElements += batchSize;
         
-        // Report progress
         self.postMessage({
           type: 'GEOMETRY_PROGRESS',
           modelId,
@@ -164,7 +163,6 @@ class IFCLoaderWorker {
           total: totalElements
         });
 
-        // Yield control to prevent blocking
         await new Promise(resolve => setTimeout(resolve, 0));
       }
 
@@ -190,7 +188,6 @@ class IFCLoaderWorker {
   }
 
   getElementColor(element) {
-    // Default colors based on element type
     const typeColors = {
       'IfcWall': [0.8, 0.8, 0.8],
       'IfcSlab': [0.7, 0.7, 0.7],
@@ -226,7 +223,6 @@ class IFCLoaderWorker {
         properties: {}
       };
 
-      // Extract property sets
       if (element.IsDefinedBy) {
         for (const rel of element.IsDefinedBy) {
           if (rel.constructor.name === 'IfcRelDefinesByProperties') {
@@ -279,7 +275,6 @@ class IFCLoaderWorker {
   }
 }
 
-// Worker message handler
 const worker = new IFCLoaderWorker();
 
 self.onmessage = async function(e) {
@@ -315,3 +310,5 @@ self.onmessage = async function(e) {
       });
   }
 };
+
+self.postMessage({ type: 'WORKER_READY' });

@@ -1,6 +1,10 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 from typing import Dict, List, Any
 import json
 import logging
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -343,3 +347,123 @@ def run_prescriptive_analysis(bim_data: Dict[str, Any]) -> Dict[str, Any]:
         "analysis_results": results
     }
 
+
+# New database-driven functions for adaptive solutions
+def suggest_solutions_for_conflict(conflict_id: int, project_id: int, db: Session) -> List[Dict[str, Any]]:
+    """
+    Suggest solutions for a specific conflict, prioritized by confidence score
+    """
+    from ..db.models.project import Solution, Conflict
+    
+    # Get the conflict
+    conflict = db.query(Conflict).filter(Conflict.id == conflict_id).first()
+    if not conflict:
+        return []
+    
+    # Get existing solutions for this conflict type, ordered by confidence
+    solutions = db.query(Solution).join(Conflict).filter(
+        Conflict.conflict_type == conflict.conflict_type,
+        Conflict.project_id == project_id
+    ).order_by(Solution.confidence_score.desc()).all()
+    
+    # Convert to dictionaries for response
+    solution_suggestions = []
+    for solution in solutions:
+        solution_dict = {
+            "id": solution.id,
+            "type": solution.solution_type,
+            "description": solution.description,
+            "estimated_cost": solution.estimated_cost / 100.0 if solution.estimated_cost else None,
+            "estimated_time": solution.estimated_time,
+            "confidence_score": solution.confidence_score,
+            "status": solution.status,
+            "created_at": solution.created_at
+        }
+        solution_suggestions.append(solution_dict)
+    
+    return solution_suggestions
+
+
+def calculate_solution_cost_with_project_params(solution_data: Dict[str, Any], project_id: int, db: Session) -> float:
+    """
+    Calculate solution cost using project-specific cost parameters
+    """
+    from ..db.models.project import ProjectCost
+    
+    # Get project cost parameters
+    project_costs = db.query(ProjectCost).filter(ProjectCost.project_id == project_id).all()
+    cost_map = {cost.parameter_name: cost.cost for cost in project_costs}
+    
+    # Default cost factors if not specified in project
+    default_costs = {
+        "CONCRETE_M3": 500.0,
+        "STEEL_KG": 2.5,
+        "LABOR_HOUR": 45.0,
+        "EQUIPMENT_HOUR": 75.0,
+        "MATERIAL_TRANSPORT": 150.0
+    }
+    
+    # Calculate cost based on solution type and parameters
+    solution_type = solution_data.get("type", "")
+    base_cost = 0.0
+    
+    if "relocation" in solution_type.lower():
+        labor_cost = cost_map.get("LABOR_HOUR", default_costs["LABOR_HOUR"])
+        equipment_cost = cost_map.get("EQUIPMENT_HOUR", default_costs["EQUIPMENT_HOUR"])
+        base_cost = (labor_cost * 8) + (equipment_cost * 2)  # 8 hours labor + 2 hours equipment
+        
+    elif "redesign" in solution_type.lower():
+        labor_cost = cost_map.get("LABOR_HOUR", default_costs["LABOR_HOUR"])
+        base_cost = labor_cost * 24  # 24 hours for redesign work
+        
+    elif "modification" in solution_type.lower() or "adjustment" in solution_type.lower():
+        labor_cost = cost_map.get("LABOR_HOUR", default_costs["LABOR_HOUR"])
+        material_cost = cost_map.get("MATERIAL_TRANSPORT", default_costs["MATERIAL_TRANSPORT"])
+        base_cost = (labor_cost * 4) + material_cost  # 4 hours labor + material transport
+        
+    else:
+        # Generic solution cost
+        labor_cost = cost_map.get("LABOR_HOUR", default_costs["LABOR_HOUR"])
+        base_cost = labor_cost * 6  # 6 hours for generic solution
+    
+    # Apply complexity multiplier based on confidence score
+    confidence_score = solution_data.get("confidence_score", 1.0)
+    complexity_multiplier = 2.0 - confidence_score  # Lower confidence = higher cost
+    
+    return base_cost * complexity_multiplier
+
+
+def create_solution_from_rules(conflict_id: int, solution_data: Dict[str, Any], project_id: int, db: Session) -> Dict[str, Any]:
+    """
+    Create a new solution in the database based on rules engine output
+    """
+    from ..db.models.project import Solution
+    
+    # Calculate cost using project parameters
+    estimated_cost = calculate_solution_cost_with_project_params(solution_data, project_id, db)
+    
+    # Create solution record
+    solution = Solution(
+        conflict_id=conflict_id,
+        solution_type=solution_data.get("type", "generic"),
+        description=solution.get("description", ""),
+        estimated_cost=int(estimated_cost * 100),  # Convert to cents
+        estimated_time=solution_data.get("estimated_time", 5),
+        confidence_score=solution_data.get("confidence_score", 1.0),
+        status="proposed"
+    )
+    
+    db.add(solution)
+    db.commit()
+    db.refresh(solution)
+    
+    return {
+        "id": solution.id,
+        "type": solution.solution_type,
+        "description": solution.description,
+        "estimated_cost": solution.estimated_cost / 100.0,
+        "estimated_time": solution.estimated_time,
+        "confidence_score": solution.confidence_score,
+        "status": solution.status,
+        "created_at": solution.created_at
+    }

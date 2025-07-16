@@ -1,3 +1,6 @@
+# Production use requires a separate commercial license from the Licensor.
+# For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
+
 import os
 import json
 import gzip
@@ -329,7 +332,7 @@ class IFCToXKTConverter:
             unit_assignments = ifc_file.by_type('IfcUnitAssignment')
             if unit_assignments:
                 units = unit_assignments[0].Units
-                project_info['units'] = [str(unit.Name) for unit in units if hasattr(unit, 'Name')]
+                project_info['units'] = [str(unit.Name) for unit in units if hasattr(unit, 'Name']
         except:
             project_info['units'] = ['METRE']
         

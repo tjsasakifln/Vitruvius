@@ -9,7 +9,7 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>Vitruvius</h1>
-        <p>AI-Powered BIM Project Coordination Platform</p>
+        <p>Plataforma de Coordenação de Projetos BIM com Motor de Análise Prescritiva</p>
       </header>
       
       <main>

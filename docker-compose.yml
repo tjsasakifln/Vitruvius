@@ -50,22 +50,5 @@ services:
     ports:
       - "6379:6379"
 
-  bimserver:
-    image: opensourcebim/bimserver:1.5.182
-    ports:
-      - "8082:8080"
-    environment:
-      - BIMSERVER_DATABASE_TYPE=postgresql
-      - BIMSERVER_DATABASE_SERVER=db
-      - BIMSERVER_DATABASE_PORT=5432
-      - BIMSERVER_DATABASE_NAME=bimserver
-      - BIMSERVER_DATABASE_USERNAME=user
-      - BIMSERVER_DATABASE_PASSWORD=password
-    depends_on:
-      - db
-    volumes:
-      - bimserver_data:/opt/bimserver/home
-
 volumes:
   postgres_data:
-  bimserver_data:

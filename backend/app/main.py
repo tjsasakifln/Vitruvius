@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .api.v1.endpoints import projects
+from .api.v1.endpoints import projects, auth
 
 app = FastAPI(
     title="Vitruvius API",
@@ -12,4 +12,5 @@ def read_root():
     return {"message": "Welcome to the Vitruvius API"}
 
 # Include API routers
-app.include_router(projects.router, prefix="/api")
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(projects.router, prefix="/api", tags=["projects"])

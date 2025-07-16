@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 import redis
 from ..services.bim_processor import process_ifc_file
-from ..services.ia_prescriptive import run_prescriptive_analysis
+from ..services.rules_engine import run_prescriptive_analysis
 from ..db.models.project import Project, IFCModel, Conflict, Solution
 from ..db.database import DATABASE_URL
 
@@ -352,23 +352,24 @@ def process_ifc_task(project_id: int, file_path: str):
             "file_hash": file_hash,
             "cache_used": file_hash is not None
         }
-        
+
     except Exception as e:
         print(f"Error processing IFC file: {str(e)}")
-        
+
         # Update status to failed
         if 'ifc_model' in locals() and ifc_model:
             ifc_model.status = "failed"
             db.commit()
-        
+
         return {
             "status": "failed",
             "error": str(e),
             "project_id": project_id
         }
-    
+
     finally:
         db.close()
+
 
 def perform_clash_detection(bim_data):
     """
@@ -379,15 +380,15 @@ def perform_clash_detection(bim_data):
     
     # Simple clash detection algorithm
     for i, element1 in enumerate(elements):
-        for j, element2 in enumerate(elements[i+1:], i+1):
+        for j, element2 in enumerate(elements[i + 1:], i + 1):
             # Check if elements have geometry
             if not (element1.get("has_geometry") and element2.get("has_geometry")):
                 continue
-                
+
             # Check for potential conflicts based on element types
             if is_potential_conflict(element1, element2):
                 severity = determine_severity(element1, element2)
-                
+
                 conflict = {
                     "type": "collision",
                     "severity": severity,
@@ -395,7 +396,7 @@ def perform_clash_detection(bim_data):
                     "elements": [element1["global_id"], element2["global_id"]]
                 }
                 conflicts.append(conflict)
-    
+
     return conflicts
 
 def is_potential_conflict(element1, element2):

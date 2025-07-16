@@ -6,3 +6,6 @@ celery
 redis
 ifcopenshell
 pydantic
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart

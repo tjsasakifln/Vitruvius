@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import SolutionFeedback from './SolutionFeedback';
 
 function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [conflicts, setConflicts] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,6 +22,7 @@ function Dashboard() {
       
       // Fetch conflicts for the first project if available
       if (data.length > 0) {
+        setSelectedProject(data[0].id);
         await fetchConflicts(data[0].id);
       } else {
         setLoading(false);
@@ -77,7 +80,10 @@ function Dashboard() {
                   <p><strong>Created:</strong> {new Date(project.created_at).toLocaleDateString()}</p>
                 )}
                 <button 
-                  onClick={() => fetchConflicts(project.id)}
+                  onClick={() => {
+                    setSelectedProject(project.id);
+                    fetchConflicts(project.id);
+                  }}
                   style={{
                     padding: '5px 10px',
                     backgroundColor: '#007bff',
@@ -117,6 +123,12 @@ function Dashboard() {
                 {conflict.created_at && (
                   <p><strong>Detected:</strong> {new Date(conflict.created_at).toLocaleDateString()}</p>
                 )}
+                
+                {/* Componente de Feedback para cada conflito */}
+                <SolutionFeedback 
+                  projectId={selectedProject} 
+                  conflictId={conflict.id} 
+                />
               </div>
             ))}
           </div>
@@ -126,8 +138,9 @@ function Dashboard() {
       </div>
 
       <div>
-        <h2>AI Recommendations</h2>
-        <p>AI-powered prescriptive solutions will appear here when conflicts are detected.</p>
+        <h2>Recomendações do Motor de Análise Prescritiva</h2>
+        <p>Soluções prescritivas do Motor de Análise Prescritiva aparecerão aqui quando conflitos forem detectados.</p>
+        <p><strong>Importante:</strong> Após revisar as soluções sugeridas, por favor forneça feedback sobre qual solução você implementou. Isso nos ajuda a melhorar nosso sistema!</p>
       </div>
     </div>
   );

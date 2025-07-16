@@ -52,7 +52,6 @@ jobs:
       run: |
         cd backend
         pytest --cov=app --cov-report=xml --cov-report=term-missing
-      continue-on-error: true
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
@@ -76,13 +75,11 @@ jobs:
       run: |
         cd frontend
         npm run lint
-      continue-on-error: true
 
     - name: Run Frontend Tests
       run: |
         cd frontend
         npm test -- --coverage --watchAll=false
-      continue-on-error: true
 
     - name: Build Frontend
       run: |

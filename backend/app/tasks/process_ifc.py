@@ -28,12 +28,76 @@ celery_app = Celery('tasks', broker=settings.CELERY_BROKER_URL, backend=settings
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Redis cache setup
-redis_client = redis.Redis(host='redis', port=6379, db=1, decode_responses=False)
+# Redis cache setup with environment-aware configuration
+try:
+    import os
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/1')
+    # Extract host from URL for Docker compatibility
+    if '://' in redis_url:
+        if 'redis:' in redis_url:
+            redis_host = 'redis'  # Docker service name
+        else:
+            redis_host = 'localhost'  # Development
+    else:
+        redis_host = 'localhost'
+    
+    redis_client = redis.Redis(host=redis_host, port=6379, db=1, decode_responses=False)
+    # Test connection
+    redis_client.ping()
+except (redis.ConnectionError, redis.TimeoutError):
+    # Fallback to None - disable caching if Redis unavailable
+    redis_client = None
 
 # Cache configuration
 CACHE_TTL = 3600 * 24 * 7  # 7 days
 CACHE_PREFIX = 'vitruvius:ifc:'
+
+def safe_redis_get(key):
+    """Safely get value from Redis, return None if Redis unavailable"""
+    if redis_client is None:
+        return None
+    try:
+        return redis_client.get(key)
+    except (redis.ConnectionError, redis.TimeoutError):
+        return None
+
+def safe_redis_setex(key, ttl, value):
+    """Safely set value in Redis with TTL, do nothing if Redis unavailable"""
+    if redis_client is None:
+        return False
+    try:
+        redis_client.setex(key, ttl, value)
+        return True
+    except (redis.ConnectionError, redis.TimeoutError):
+        return False
+
+def safe_redis_keys(pattern):
+    """Safely get keys from Redis, return empty list if Redis unavailable"""
+    if redis_client is None:
+        return []
+    try:
+        return redis_client.keys(pattern)
+    except (redis.ConnectionError, redis.TimeoutError):
+        return []
+
+def safe_redis_delete(*keys):
+    """Safely delete keys from Redis, do nothing if Redis unavailable"""
+    if redis_client is None or not keys:
+        return False
+    try:
+        redis_client.delete(*keys)
+        return True
+    except (redis.ConnectionError, redis.TimeoutError):
+        return False
+
+def safe_redis_info(section=None):
+    """Safely get Redis info, return empty dict if Redis unavailable"""
+    if redis_client is None:
+        return {}
+    try:
+        return redis_client.info(section) if section else redis_client.info()
+    except (redis.ConnectionError, redis.TimeoutError):
+        return {}
 
 def get_file_hash(file_path: str) -> str:
     """Generate hash for file content for caching"""
@@ -70,7 +134,7 @@ def cache_ifc_processing_result(file_hash: str, result_type: str, data: any) -> 
         cache_key = get_cache_key('result', file_hash, result_type)
         serialized_data = pickle.dumps(data)
         
-        redis_client.setex(cache_key, CACHE_TTL, serialized_data)
+        safe_redis_setex(cache_key, CACHE_TTL, serialized_data)
         print(f"Cached {result_type} for file hash {file_hash}")
         return True
         
@@ -91,7 +155,7 @@ def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
     """
     try:
         cache_key = get_cache_key('result', file_hash, result_type)
-        cached_data = redis_client.get(cache_key)
+        cached_data = safe_redis_get(cache_key)
         
         if cached_data:
             result = pickle.loads(cached_data)
@@ -112,7 +176,7 @@ def cache_geometry_data(file_hash: str, geometry_data: dict) -> bool:
         # Compress geometry data before caching
         compressed_data = pickle.dumps(geometry_data)
         
-        redis_client.setex(cache_key, CACHE_TTL, compressed_data)
+        safe_redis_setex(cache_key, CACHE_TTL, compressed_data)
         print(f"Cached geometry data for file hash {file_hash}")
         return True
         
@@ -124,7 +188,7 @@ def get_cached_geometry_data(file_hash: str) -> dict:
     """Get cached geometry data"""
     try:
         cache_key = get_cache_key('geometry', file_hash)
-        cached_data = redis_client.get(cache_key)
+        cached_data = safe_redis_get(cache_key)
         
         if cached_data:
             geometry_data = pickle.loads(cached_data)
@@ -141,7 +205,7 @@ def cache_model_metadata(file_hash: str, metadata: dict) -> bool:
     """Cache model metadata"""
     try:
         cache_key = get_cache_key('metadata', file_hash)
-        redis_client.setex(cache_key, CACHE_TTL, json.dumps(metadata))
+        safe_redis_setex(cache_key, CACHE_TTL, json.dumps(metadata))
         print(f"Cached metadata for file hash {file_hash}")
         return True
         
@@ -153,7 +217,7 @@ def get_cached_model_metadata(file_hash: str) -> dict:
     """Get cached model metadata"""
     try:
         cache_key = get_cache_key('metadata', file_hash)
-        cached_data = redis_client.get(cache_key)
+        cached_data = safe_redis_get(cache_key)
         
         if cached_data:
             metadata = json.loads(cached_data)
@@ -170,10 +234,10 @@ def invalidate_cache(file_hash: str) -> bool:
     """Invalidate all cache entries for a file"""
     try:
         pattern = get_cache_key('*', file_hash, '*')
-        keys = redis_client.keys(pattern)
+        keys = safe_redis_keys(pattern)
         
         if keys:
-            redis_client.delete(*keys)
+            safe_redis_delete(*keys)
             print(f"Invalidated {len(keys)} cache entries for file hash {file_hash}")
         
         return True
@@ -185,12 +249,12 @@ def invalidate_cache(file_hash: str) -> bool:
 def get_cache_stats() -> dict:
     """Get cache statistics"""
     try:
-        info = redis_client.info('memory')
-        keyspace = redis_client.info('keyspace')
+        info = safe_redis_info('memory')
+        keyspace = safe_redis_info('keyspace')
         
         # Count Vitruvius cache keys
         pattern = f"{CACHE_PREFIX}*"
-        vitruvius_keys = len(redis_client.keys(pattern))
+        vitruvius_keys = len(safe_redis_keys(pattern))
         
         return {
             'total_memory_used': info.get('used_memory_human', 'Unknown'),
@@ -265,10 +329,18 @@ def process_ifc_task(project_id: int, file_path: str):
         
         # Store conflicts in database
         for conflict_data in conflicts_detected:
+            # Get element objects for this conflict
+            element_ifc_ids = conflict_data["elements"]
+            conflict_elements = db.query(Element).filter(
+                Element.ifc_id.in_(element_ifc_ids)
+            ).all()
+            
             # Check if conflict already exists to avoid duplicates
+            # Create a simple check based on project and conflict type
             existing_conflict = db.query(Conflict).filter(
                 Conflict.project_id == project_id,
-                Conflict.elements_involved == ",".join(conflict_data["elements"])
+                Conflict.conflict_type == conflict_data["type"],
+                Conflict.description == conflict_data["description"]
             ).first()
             
             if not existing_conflict:
@@ -277,9 +349,10 @@ def process_ifc_task(project_id: int, file_path: str):
                     conflict_type=conflict_data["type"],
                     severity=conflict_data["severity"],
                     description=conflict_data["description"],
-                    elements_involved=",".join(conflict_data["elements"]),
                     status="detected"
                 )
+                # Add the many-to-many relationship with elements
+                conflict.elements = conflict_elements
                 db.add(conflict)
         
         db.commit()
@@ -449,13 +522,15 @@ def get_conflict_id_by_elements(db, project_id, elements):
     """
     Get conflict ID by matching elements.
     """
-    elements_str = ",".join(elements)
-    conflict = db.query(Conflict).filter(
-        Conflict.project_id == project_id,
-        Conflict.elements_involved == elements_str
-    ).first()
+    # Find conflicts that involve the same elements
+    # This is a simplified approach - in a real implementation you might want
+    # more sophisticated matching logic
+    for conflict in db.query(Conflict).filter(Conflict.project_id == project_id).all():
+        conflict_element_ids = [elem.ifc_id for elem in conflict.elements]
+        if set(conflict_element_ids) == set(elements):
+            return conflict.id
     
-    return conflict.id if conflict else None
+    return None
 
 
 @celery_app.task

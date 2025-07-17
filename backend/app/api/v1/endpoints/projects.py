@@ -61,61 +61,105 @@ async def upload_ifc_model(
     db: Session = Depends(get_db)
 ):
     """Upload IFC model to project"""
-    if not file.filename.endswith('.ifc'):
-        raise HTTPException(status_code=400, detail="File must be IFC format")
-    
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id
-    ).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Generate unique filename
-    file_id = str(uuid.uuid4())
-    file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{file_id}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-    
-    # Save file to disk
     try:
+        # Validate input parameters
+        if project_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid project ID")
+        
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Validate file format
+        if not file.filename.lower().endswith('.ifc'):
+            raise HTTPException(status_code=400, detail="File must be IFC format")
+        
+        # Check file size (limit to 100MB)
+        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+        file_content = await file.read()
+        if len(file_content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large (max 100MB)")
+        
+        # Reset file pointer for future reads
+        await file.seek(0)
+        
+        # Validate project access
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Ensure upload directory exists
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        os.makedirs(os.path.join(UPLOAD_DIR, "converted"), exist_ok=True)
+        
+        # Generate unique filename
+        file_id = str(uuid.uuid4())
+        file_extension = os.path.splitext(file.filename)[1]
+        unique_filename = f"{file_id}{file_extension}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        
+        # Save file to disk with error handling
         with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            f.write(file_content)
+        
+        # Create IFC model record
+        ifc_model = IFCModel(
+            project_id=project_id,
+            filename=file.filename,
+            file_path=file_path,
+            status="uploaded"
+        )
+        db.add(ifc_model)
+        db.commit()
+        db.refresh(ifc_model)
+        
+        # Generate paths for converted files
+        file_base = os.path.splitext(unique_filename)[0]
+        gltf_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.gltf")
+        xkt_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.xkt")
+        
+        # Start async processing tasks with error handling
+        try:
+            task = process_ifc_task.delay(project_id, file_path)
+            gltf_task = convert_ifc_to_gltf.delay(file_path, gltf_path, project_id)
+            xkt_task = convert_ifc_to_xkt.delay(file_path, xkt_path, project_id)
+            
+            return {
+                "message": "IFC file uploaded successfully",
+                "task_id": task.id,
+                "gltf_task_id": gltf_task.id,
+                "xkt_task_id": xkt_task.id,
+                "model_id": ifc_model.id,
+                "file_path": file_path
+            }
+        except Exception as task_err:
+            # If background tasks fail, still return success but note the issue
+            print(f"Warning: Background task start failed: {task_err}")
+            return {
+                "message": "IFC file uploaded successfully, processing may be delayed",
+                "model_id": ifc_model.id,
+                "file_path": file_path,
+                "warning": "Background processing unavailable"
+            }
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
-    
-    # Create IFC model record
-    ifc_model = IFCModel(
-        project_id=project_id,
-        filename=file.filename,
-        file_path=file_path,
-        status="uploaded"
-    )
-    db.add(ifc_model)
-    db.commit()
-    db.refresh(ifc_model)
-    
-    # Start async processing
-    task = process_ifc_task.delay(project_id, file_path)
-    
-    # Generate paths for converted files
-    file_base = os.path.splitext(unique_filename)[0]
-    gltf_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.gltf")
-    xkt_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.xkt")
-    
-    # Start conversion tasks
-    gltf_task = convert_ifc_to_gltf.delay(file_path, gltf_path, project_id)
-    xkt_task = convert_ifc_to_xkt.delay(file_path, xkt_path, project_id)
-    
-    return {
-        "message": "IFC file uploaded successfully",
-        "task_id": task.id,
-        "gltf_task_id": gltf_task.id,
-        "xkt_task_id": xkt_task.id,
-        "model_id": ifc_model.id,
-        "file_path": file_path
-    }
+        # Clean up file if it exists and return error
+        if 'file_path' in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass  # Ignore cleanup errors
+        
+        print(f"Unexpected error in upload_ifc_model: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Internal server error during file upload"
+        )
 
 
 @router.get("/{project_id}/conflicts")
@@ -125,31 +169,68 @@ def get_project_conflicts(
     db: Session = Depends(get_db)
 ):
     """Get conflicts detected in project"""
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id
-    ).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        # Validate project_id
+        if project_id <= 0:
+            raise HTTPException(status_code=400, detail="Invalid project ID")
+        
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Get real conflicts from database with error handling
+        conflicts = db.query(Conflict).filter(Conflict.project_id == project_id).all()
+        
+        conflict_list = []
+        for c in conflicts:
+            try:
+                # Safely access elements with error handling
+                elements = []
+                for e in c.elements:
+                    try:
+                        elements.append({
+                            "id": e.id,
+                            "ifc_id": e.ifc_id,
+                            "type": e.element_type or "Unknown",
+                            "name": e.name or "Unnamed"
+                        })
+                    except Exception as e_err:
+                        # Log element error but continue
+                        print(f"Error processing element: {e_err}")
+                        continue
+                
+                conflict_list.append({
+                    "id": c.id,
+                    "type": c.conflict_type or "Unknown",
+                    "description": c.description or "No description",
+                    "severity": c.severity or "medium",
+                    "elements": elements,
+                    "status": c.status or "detected",
+                    "created_at": c.created_at.isoformat() if c.created_at else None
+                })
+            except Exception as c_err:
+                # Log conflict error but continue
+                print(f"Error processing conflict {c.id}: {c_err}")
+                continue
+        
+        return {
+            "project_id": project_id,
+            "conflicts": conflict_list
+        }
     
-    # Get real conflicts from database
-    conflicts = db.query(Conflict).filter(Conflict.project_id == project_id).all()
-    
-    return {
-        "project_id": project_id,
-        "conflicts": [
-            {
-                "id": c.id,
-                "type": c.conflict_type,
-                "description": c.description,
-                "severity": c.severity,
-                "elements": [{"id": e.id, "ifc_id": e.ifc_id, "type": e.element_type, "name": e.name} for e in c.elements],
-                "status": c.status,
-                "created_at": c.created_at
-            }
-            for c in conflicts
-        ]
-    }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        print(f"Unexpected error in get_project_conflicts: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Internal server error while retrieving conflicts"
+        )
 
 
 @router.get("/{project_id}/conflicts/{conflict_id}/solutions")

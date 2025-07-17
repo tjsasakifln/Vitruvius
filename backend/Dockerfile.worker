@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./app /app
 
-CMD ["celery", "-A", "tasks.process_ifc:celery_app", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "app.tasks.process_ifc:celery_app", "worker", "--loglevel=info"]

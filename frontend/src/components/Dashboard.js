@@ -5,12 +5,19 @@
 
 import React, { useState, useEffect } from 'react';
 import SolutionFeedback from './SolutionFeedback';
+import ConflictDetails from './ConflictDetails';
+import ActivityTimeline from './ActivityTimeline';
 
 function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [selectedConflict, setSelectedConflict] = useState(null);
+  const [currentView, setCurrentView] = useState('overview'); // 'overview', 'conflict_details', 'activity'
   const [loading, setLoading] = useState(true);
+  
+  // Mock current user (in real app, get from auth context)
+  const currentUser = { id: 1, full_name: 'Demo User', email: 'demo@example.com' };
 
   useEffect(() => {
     fetchProjects();
@@ -56,13 +63,113 @@ function Dashboard() {
     }
   };
 
+  const handleConflictSelect = (conflict) => {
+    setSelectedConflict(conflict);
+    setCurrentView('conflict_details');
+  };
+
+  const handleBackToOverview = () => {
+    setSelectedConflict(null);
+    setCurrentView('overview');
+  };
+
   if (loading) {
     return <div>Loading dashboard...</div>;
   }
 
+  // Render conflict details view
+  if (currentView === 'conflict_details' && selectedConflict) {
+    return (
+      <div>
+        <div style={{ padding: '20px', borderBottom: '1px solid #ddd', backgroundColor: '#f8f9fa' }}>
+          <button 
+            onClick={handleBackToOverview}
+            style={{ 
+              padding: '8px 16px', 
+              backgroundColor: '#6c757d', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '4px',
+              cursor: 'pointer',
+              marginRight: '20px'
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+          <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
+            Conflict #{selectedConflict.id} - {selectedConflict.type}
+          </span>
+        </div>
+        <ConflictDetails 
+          conflictId={selectedConflict.id}
+          projectId={selectedProject}
+          currentUser={currentUser}
+        />
+      </div>
+    );
+  }
+
+  // Render activity timeline view
+  if (currentView === 'activity') {
+    return (
+      <div>
+        <div style={{ padding: '20px', borderBottom: '1px solid #ddd', backgroundColor: '#f8f9fa' }}>
+          <button 
+            onClick={() => setCurrentView('overview')}
+            style={{ 
+              padding: '8px 16px', 
+              backgroundColor: '#6c757d', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '4px',
+              cursor: 'pointer',
+              marginRight: '20px'
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+          <span style={{ fontSize: '18px', fontWeight: 'bold' }}>Project Activity Timeline</span>
+        </div>
+        <ActivityTimeline projectId={selectedProject} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '20px' }}>
-      <h1>Vitruvius Dashboard</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h1>Vitruvius Dashboard</h1>
+        
+        {/* View Toggle */}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={() => setCurrentView('overview')}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: currentView === 'overview' ? '#007bff' : '#6c757d',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Overview
+          </button>
+          <button
+            onClick={() => setCurrentView('activity')}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: currentView === 'activity' ? '#007bff' : '#6c757d',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Activity Timeline
+          </button>
+        </div>
+      </div>
       
       <div style={{ marginBottom: '30px' }}>
         <h2>Projects</h2>
@@ -81,22 +188,40 @@ function Dashboard() {
                 {project.created_at && (
                   <p><strong>Created:</strong> {new Date(project.created_at).toLocaleDateString()}</p>
                 )}
-                <button 
-                  onClick={() => {
-                    setSelectedProject(project.id);
-                    fetchConflicts(project.id);
-                  }}
-                  style={{
-                    padding: '5px 10px',
-                    backgroundColor: '#007bff',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  View Conflicts
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button 
+                    onClick={() => {
+                      setSelectedProject(project.id);
+                      fetchConflicts(project.id);
+                    }}
+                    style={{
+                      padding: '5px 10px',
+                      backgroundColor: '#007bff',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    View Conflicts
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setSelectedProject(project.id);
+                      setCurrentView('activity');
+                    }}
+                    style={{
+                      padding: '5px 10px',
+                      backgroundColor: '#28a745',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    View Activity
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -126,10 +251,25 @@ function Dashboard() {
                   <p><strong>Detected:</strong> {new Date(conflict.created_at).toLocaleDateString()}</p>
                 )}
                 
-                <SolutionFeedback 
-                  projectId={selectedProject} 
-                  conflictId={conflict.id} 
-                />
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button
+                    onClick={() => handleConflictSelect(conflict)}
+                    style={{
+                      padding: '5px 10px',
+                      backgroundColor: '#17a2b8',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    View Details & Collaborate
+                  </button>
+                  <SolutionFeedback 
+                    projectId={selectedProject} 
+                    conflictId={conflict.id} 
+                  />
+                </div>
               </div>
             ))}
           </div>

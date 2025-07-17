@@ -232,25 +232,25 @@ This project is licensed under the Business Source License 1.1 (BSL 1.1).
 - [x] **3D Visualization** - Three.js powered viewer
 - [x] **Prescriptive AI** - Solution recommendations
 
-### Q2 2025 (v1.1)
+### Q4 2025 (v1.1)
 - [ ] **Module 1: Construction Site Features**
   - [ ] **Responsive PWA** - Progressive Web App for mobile devices
   - [ ] **AR Integration** - Native app with ARKit/ARCore support
   - [ ] **Offline Sync** - Field data synchronization
 
-### Q3 2025 (v1.2) 
+### Q1 2026 (v1.2) 
 - [ ] **Module 2: Compliance & Standardization**
   - [ ] **Enhanced Rules Engine** - Expand `rules_engine.py` with `rule_type` (CLASH, COMPLIANCE)
   - [ ] **Standards Integration** - Add `norm_reference` field for ABNT NBR 15575, IBC codes
   - [ ] **Metadata Validation** - Compliance rules based on IFC element properties
   - [ ] **Thermal Compliance** - Verify `transmitancia_termica` parameters on external walls
 
-### Q4 2025 (v1.3)
+### Q2 2026 (v1.3)
 - [ ] **Advanced Integrations** - Revit, ArchiCAD, Tekla plugins
 - [ ] **Enterprise Analytics** - Advanced cost analysis and reporting
 - [ ] **Multi-tenancy** - Enterprise scalability and white-label options
 
-### 2026 (v2.0)
+### 2027 (v2.0)
 - [ ] **Global Expansion** - Multi-language support and international building codes
 - [ ] **AI Optimization** - Machine learning model improvements
 - [ ] **Blockchain Integration** - Immutable audit trails and smart contracts

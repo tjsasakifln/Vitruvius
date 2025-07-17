@@ -29,6 +29,23 @@ APS_CALLBACK_URL = os.getenv("APS_CALLBACK_URL", "http://localhost:8000/api/v1/a
 if not APS_CLIENT_ID or not APS_CLIENT_SECRET:
     logger.warning("APS credentials not configured. APS integration will not be available.")
 
+def get_aps_integration_for_user(user_id: int, db: Session) -> APSIntegration:
+    """
+    Get APS integration instance with loaded tokens for a user
+    """
+    if not APS_CLIENT_ID or not APS_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="APS integration not configured")
+    
+    aps = APSIntegration(APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL)
+    
+    if not aps.load_tokens_from_db(db, user_id):
+        raise HTTPException(status_code=401, detail="APS authentication required")
+    
+    if not aps.is_token_valid():
+        raise HTTPException(status_code=401, detail="APS token expired. Please re-authenticate")
+    
+    return aps
+
 @router.get("/auth/login")
 def aps_login(request: Request):
     """
@@ -66,8 +83,8 @@ def aps_callback(
         aps = APSIntegration(APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL)
         token_data = aps.exchange_code_for_token(code)
         
-        # Store APS token for the user (you might want to create a separate table for this)
-        # For now, we'll store it in the user's session or a temporary store
+        # Store APS tokens in database
+        aps.save_tokens_to_db(db, current_user.id)
         
         # Get user profile from APS
         user_profile = aps.get_user_profile()
@@ -82,6 +99,51 @@ def aps_callback(
         logger.error(f"Error in APS callback: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to complete APS authentication: {str(e)}")
 
+@router.post("/auth/logout")
+def aps_logout(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from APS and revoke tokens
+    """
+    try:
+        aps = APSIntegration(APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL)
+        
+        if aps.load_tokens_from_db(db, current_user.id):
+            aps.revoke_tokens(db)
+        
+        return {"message": "APS logout successful"}
+        
+    except Exception as e:
+        logger.error(f"Error in APS logout: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to logout from APS: {str(e)}")
+
+@router.post("/auth/refresh")
+def refresh_aps_token(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh APS access token
+    """
+    try:
+        aps = APSIntegration(APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL)
+        
+        if not aps.load_tokens_from_db(db, current_user.id):
+            raise HTTPException(status_code=401, detail="APS authentication required")
+        
+        token_data = aps.refresh_access_token()
+        
+        return {
+            "message": "Token refreshed successfully",
+            "expires_in": token_data.get("expires_in")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error refreshing APS token: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh APS token: {str(e)}")
+
 @router.get("/hubs")
 def get_aps_hubs(
     current_user: User = Depends(get_current_active_user),
@@ -91,12 +153,7 @@ def get_aps_hubs(
     Get list of APS hubs (teams/companies) user has access to
     """
     try:
-        # Get user's APS token (you'll need to implement token storage)
-        access_token = get_user_aps_token(current_user.id, db)
-        
-        aps = APSIntegration(APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL)
-        aps.set_token(access_token)
-        
+        aps = get_aps_integration_for_user(current_user.id, db)
         hubs = aps.get_hubs()
         
         return {

@@ -18,6 +18,10 @@ import trimesh
 from pygltflib import GLTF2
 from pydantic import BaseModel, ValidationError
 from typing import Dict, Any, Optional, List
+import signal
+import time
+import traceback
+from contextlib import contextmanager
 from ..services.bim_processor import process_ifc_file
 from ..services.sandbox_processor import create_sandbox_processor
 from ..services.rules_engine import run_prescriptive_analysis
@@ -25,8 +29,19 @@ from ..db.models.project import Project, IFCModel, Conflict, Solution
 from ..db.database import DATABASE_URL
 from ..core.config import settings
 
-# Configure Celery
+# Configure Celery with poison pill handling
 celery_app = Celery('tasks', broker=settings.CELERY_BROKER_URL, backend=settings.CELERY_RESULT_BACKEND)
+
+# Configure task timeouts and retries
+celery_app.conf.update(
+    task_time_limit=1800,  # 30 minutes hard timeout
+    task_soft_time_limit=1500,  # 25 minutes soft timeout
+    task_reject_on_worker_lost=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    task_default_retry_delay=60,
+    task_max_retries=3
+)
 
 # Database setup for Celery tasks
 engine = create_engine(DATABASE_URL)
@@ -382,6 +397,49 @@ def invalidate_cache(file_hash: str) -> bool:
         print(f"Error invalidating cache: {str(e)}")
         return False
 
+def invalidate_project_cache(project_id: int) -> bool:
+    """Invalidate all cache entries for a project"""
+    try:
+        # Get all IFC models for the project
+        with SessionLocal() as db:
+            models = db.query(IFCModel).filter(IFCModel.project_id == project_id).all()
+            
+            total_invalidated = 0
+            for model in models:
+                if model.file_path and os.path.exists(model.file_path):
+                    file_hash = get_file_hash(model.file_path)
+                    if file_hash:
+                        pattern = get_cache_key('*', file_hash, '*')
+                        keys = safe_redis_keys(pattern)
+                        
+                        if keys:
+                            safe_redis_delete(*keys)
+                            total_invalidated += len(keys)
+            
+            print(f"Invalidated {total_invalidated} cache entries for project {project_id}")
+            return True
+        
+    except Exception as e:
+        print(f"Error invalidating project cache: {str(e)}")
+        return False
+
+def invalidate_model_cache(model_id: int) -> bool:
+    """Invalidate cache entries for a specific model"""
+    try:
+        with SessionLocal() as db:
+            model = db.query(IFCModel).filter(IFCModel.id == model_id).first()
+            
+            if model and model.file_path and os.path.exists(model.file_path):
+                file_hash = get_file_hash(model.file_path)
+                if file_hash:
+                    return invalidate_cache(file_hash)
+            
+            return True
+        
+    except Exception as e:
+        print(f"Error invalidating model cache: {str(e)}")
+        return False
+
 def get_cache_stats() -> dict:
     """Get cache statistics"""
     try:
@@ -403,13 +461,115 @@ def get_cache_stats() -> dict:
         print(f"Error getting cache stats: {str(e)}")
         return {}
 
-@celery_app.task
-def process_ifc_task(project_id: int, file_path: str):
+class TaskTimeoutError(Exception):
+    """Custom exception for task timeouts"""
+    pass
+
+class TaskProcessingError(Exception):
+    """Custom exception for task processing errors"""
+    pass
+
+@contextmanager
+def task_timeout(seconds):
+    """Context manager for task timeout handling"""
+    def timeout_handler(signum, frame):
+        raise TaskTimeoutError(f"Task timed out after {seconds} seconds")
+    
+    # Set up signal handler
+    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+def validate_ifc_file_safety(file_path: str) -> bool:
+    """Validate IFC file for potential issues that could cause poison pills"""
+    try:
+        # Check file size (already done in upload, but double-check)
+        file_size = os.path.getsize(file_path)
+        if file_size > 100 * 1024 * 1024:  # 100MB limit for processing
+            print(f"File too large for safe processing: {file_size} bytes")
+            return False
+        
+        # Try to open the file with ifcopenshell with timeout
+        with task_timeout(30):  # 30 seconds to open file
+            ifc_file = ifcopenshell.open(file_path)
+            
+            # Check for reasonable entity count
+            entity_count = len(ifc_file.by_type('IfcBuildingElement'))
+            if entity_count > 50000:  # Arbitrary limit for demo
+                print(f"Too many entities for safe processing: {entity_count}")
+                return False
+            
+            # Check for potentially problematic geometric complexity
+            geometry_entities = ifc_file.by_type('IfcGeometricRepresentationItem')
+            if len(geometry_entities) > 100000:  # Arbitrary limit
+                print(f"Too many geometry entities: {len(geometry_entities)}")
+                return False
+        
+        return True
+        
+    except TaskTimeoutError:
+        print("File validation timed out - file may be corrupted")
+        return False
+    except Exception as e:
+        print(f"Error validating IFC file safety: {str(e)}")
+        return False
+
+def mark_task_as_poison(file_path: str, error_message: str):
+    """Mark a file as causing poison pill issues"""
+    try:
+        poison_key = f"poison_pill:{hashlib.md5(file_path.encode()).hexdigest()}"
+        poison_data = {
+            'file_path': file_path,
+            'error_message': error_message,
+            'timestamp': time.time(),
+            'poisoned_at': datetime.now().isoformat()
+        }
+        
+        # Store in Redis with 24 hour expiry
+        safe_redis_setex(poison_key, 86400, json.dumps(poison_data))
+        print(f"Marked file as poison pill: {file_path}")
+        
+    except Exception as e:
+        print(f"Error marking file as poison pill: {str(e)}")
+
+def is_poison_pill(file_path: str) -> bool:
+    """Check if a file is marked as a poison pill"""
+    try:
+        poison_key = f"poison_pill:{hashlib.md5(file_path.encode()).hexdigest()}"
+        poison_data = safe_redis_get(poison_key)
+        
+        if poison_data:
+            data = json.loads(poison_data)
+            # Check if poison pill is recent (within 24 hours)
+            if time.time() - data['timestamp'] < 86400:
+                print(f"File is marked as poison pill: {file_path}")
+                return True
+            else:
+                # Remove expired poison pill marker
+                safe_redis_delete(poison_key)
+        
+        return False
+        
+    except Exception as e:
+        print(f"Error checking poison pill status: {str(e)}")
+        return False
+
+@celery_app.task(bind=True, autoretry_for=(TaskProcessingError,), retry_kwargs={'max_retries': 3, 'countdown': 60})
+def process_ifc_task(self, project_id: int, file_path: str):
     """
     Celery task to process an IFC file asynchronously with clash detection and caching.
     """
     try:
         print(f"Starting IFC processing for project {project_id}: {file_path}")
+        
+        # Check if file is marked as poison pill
+        if is_poison_pill(file_path):
+            raise TaskProcessingError(f"File is marked as poison pill: {file_path}")
         
         # Security: Validate file path
         if not os.path.exists(file_path) or not os.path.isfile(file_path):
@@ -420,6 +580,12 @@ def process_ifc_task(project_id: int, file_path: str):
         MAX_PROCESSING_SIZE = 50 * 1024 * 1024  # 50MB
         if file_size > MAX_PROCESSING_SIZE:
             raise Exception(f"File too large for processing: {file_size} bytes")
+        
+        # Validate file safety before processing
+        if not validate_ifc_file_safety(file_path):
+            error_msg = "File failed safety validation - may cause processing issues"
+            mark_task_as_poison(file_path, error_msg)
+            raise TaskProcessingError(error_msg)
         
         # Generate file hash for caching
         file_hash = get_file_hash(file_path)
@@ -598,8 +764,54 @@ def process_ifc_task(project_id: int, file_path: str):
             "cache_used": file_hash is not None
         }
 
+    except TaskProcessingError as e:
+        print(f"Task processing error: {str(e)}")
+        
+        # Update status to failed
+        with SessionLocal() as db:
+            ifc_model = db.query(IFCModel).filter(
+                IFCModel.project_id == project_id,
+                IFCModel.file_path == file_path
+            ).first()
+            
+            if ifc_model:
+                ifc_model.status = "failed"
+                db.commit()
+        
+        # Re-raise for Celery retry mechanism
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+    
+    except TaskTimeoutError as e:
+        print(f"Task timeout error: {str(e)}")
+        
+        # Mark as poison pill since it timed out
+        mark_task_as_poison(file_path, str(e))
+        
+        # Update status to failed
+        with SessionLocal() as db:
+            ifc_model = db.query(IFCModel).filter(
+                IFCModel.project_id == project_id,
+                IFCModel.file_path == file_path
+            ).first()
+            
+            if ifc_model:
+                ifc_model.status = "failed"
+                db.commit()
+
+        return {
+            "status": "failed",
+            "error": f"Task timed out: {str(e)}",
+            "project_id": project_id,
+            "poison_pill": True
+        }
+    
     except Exception as e:
         print(f"Error processing IFC file: {str(e)}")
+        
+        # Check if this is a recurring error that should mark file as poison
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ['memory', 'timeout', 'corrupted', 'invalid']):
+            mark_task_as_poison(file_path, str(e))
 
         # Update status to failed
         with SessionLocal() as db:

@@ -2,7 +2,7 @@
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 import os
 import uuid
@@ -10,7 +10,7 @@ from datetime import datetime
 from ...db.models.project import Project, IFCModel, Conflict, User, Solution, SolutionFeedback, ProjectCost
 from ...db.database import get_db
 from ...services.bim_processor import process_ifc_file
-from ...tasks.process_ifc import process_ifc_task, convert_ifc_to_gltf, convert_ifc_to_xkt, run_inter_model_clash_detection
+from ...tasks.process_ifc import process_ifc_task, convert_ifc_to_gltf, convert_ifc_to_xkt, run_inter_model_clash_detection, invalidate_project_cache, invalidate_model_cache
 from ...auth.dependencies import get_current_active_user, require_project_view, require_file_upload, require_project_edit
 from ...core.exceptions import (
     ValidationError, ResourceNotFoundError, handle_database_error, 
@@ -27,6 +27,19 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # Ensure upload directory exists
 UPLOAD_DIR = "/app/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Database query optimization helpers
+def get_conflicts_with_elements(db: Session, project_id: int):
+    """Get conflicts with elements using optimized query to avoid N+1 problems"""
+    return db.query(Conflict).options(
+        joinedload(Conflict.elements)
+    ).filter(Conflict.project_id == project_id).all()
+
+def get_solutions_with_conflict(db: Session, conflict_id: int):
+    """Get solutions with conflict data using optimized query"""
+    return db.query(Solution).options(
+        joinedload(Solution.conflict)
+    ).filter(Solution.conflict_id == conflict_id).order_by(Solution.confidence_score.desc()).all()
 
 
 def ensure_file_exists(file_path: str) -> bool:
@@ -132,6 +145,7 @@ def get_projects(
     db: Session = Depends(get_db)
 ):
     """Get all projects for current user"""
+    # Use eager loading to avoid N+1 queries if needed in future
     projects = db.query(Project).filter(Project.owner_id == current_user.id).all()
     return [{"id": p.id, "name": p.name, "status": p.status, "created_at": p.created_at} for p in projects]
 
@@ -249,6 +263,9 @@ async def upload_ifc_model(
         gltf_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.gltf")
         xkt_path = os.path.join(UPLOAD_DIR, "converted", f"{file_base}.xkt")
         
+        # Invalidate cache for project when new model is uploaded
+        invalidate_project_cache(project_id)
+        
         # Start async processing tasks with error handling
         try:
             # Verify file still exists before starting background tasks
@@ -339,8 +356,8 @@ def get_project_conflicts(
             raise HTTPException(status_code=400, detail="Invalid project ID")
         
         # Permission check is handled by require_project_view dependency
-        # Get real conflicts from database with error handling
-        conflicts = db.query(Conflict).filter(Conflict.project_id == project_id).all()
+        # Get real conflicts from database with error handling - using optimized query
+        conflicts = get_conflicts_with_elements(db, project_id)
         
         conflict_list = []
         for c in conflicts:
@@ -415,8 +432,8 @@ def get_conflict_solutions(
     if not conflict:
         raise HTTPException(status_code=404, detail="Conflict not found")
     
-    # Get solutions prioritized by confidence score
-    solutions = db.query(Solution).filter(Solution.conflict_id == conflict_id).order_by(Solution.confidence_score.desc()).all()
+    # Get solutions prioritized by confidence score - using optimized query
+    solutions = get_solutions_with_conflict(db, conflict_id)
     
     # Also get suggested solutions from similar conflicts in the same project
     similar_solutions = suggest_solutions_for_conflict(conflict_id, project_id, db)

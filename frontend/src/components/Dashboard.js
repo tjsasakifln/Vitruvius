@@ -49,11 +49,18 @@ function Dashboard() {
     }
   };
 
-  const fetchConflicts = async (projectId = null) => {
+  const fetchConflicts = async (projectId = null, forceRefresh = false) => {
     try {
       const targetProjectId = projectId || (projects.length > 0 ? projects[0].id : 1);
       
-      const response = await fetch(`/api/projects/${targetProjectId}/conflicts`);
+      // Add cache-busting parameter when forcing refresh
+      const url = forceRefresh 
+        ? `/api/projects/${targetProjectId}/conflicts?_t=${Date.now()}`
+        : `/api/projects/${targetProjectId}/conflicts`;
+      
+      const response = await fetch(url, {
+        headers: forceRefresh ? { 'Cache-Control': 'no-cache' } : {}
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }

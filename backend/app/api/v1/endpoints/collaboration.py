@@ -2,7 +2,7 @@
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, File, UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Dict, Any
 import json
 import os
@@ -172,8 +172,10 @@ def get_conflict_comments(
     if not project:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get comments with pagination
-    comments_query = db.query(Comment).filter(
+    # Get comments with pagination - using joinedload to avoid N+1 queries
+    comments_query = db.query(Comment).options(
+        joinedload(Comment.user)
+    ).filter(
         Comment.conflict_id == conflict_id
     ).order_by(Comment.created_at.desc())
     
@@ -186,7 +188,7 @@ def get_conflict_comments(
     # Format response
     comment_list = []
     for comment in comments:
-        user = db.query(User).filter(User.id == comment.user_id).first()
+        user = comment.user  # No need for separate query - already loaded
         comment_data = {
             "id": comment.id,
             "message": comment.message,

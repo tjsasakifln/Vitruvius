@@ -10,6 +10,9 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, quote
 from authlib.integrations.requests_client import OAuth2Session
+from sqlalchemy.orm import Session
+from ..db.models.project import User
+from ..db.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class APSIntegration:
         self._access_token = None
         self._refresh_token = None
         self._token_expires_at = None
+        self._user_id = None
     
     def get_authorization_url(self, state: str = None) -> str:
         """
@@ -146,13 +150,14 @@ class APSIntegration:
         
         return self._access_token
     
-    def set_token(self, access_token: str, refresh_token: str = None, expires_in: int = 3600):
+    def set_token(self, access_token: str, refresh_token: str = None, expires_in: int = 3600, user_id: int = None):
         """
         Set token information directly (for when tokens are stored/retrieved from database)
         """
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
+        self._user_id = user_id
     
     def get_user_profile(self) -> Dict[str, Any]:
         """
@@ -486,3 +491,106 @@ class APSIntegration:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error getting issues: {e}")
             raise Exception(f"Failed to get issues: {e}")
+    
+    def save_tokens_to_db(self, db: Session, user_id: int):
+        """
+        Save APS tokens to database for persistence
+        """
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise Exception("User not found")
+            
+            # Store tokens in user profile (you might want to create a separate table for this)
+            user.aps_access_token = self._access_token
+            user.aps_refresh_token = self._refresh_token
+            user.aps_token_expires_at = self._token_expires_at
+            
+            db.commit()
+            logger.info(f"Saved APS tokens for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error saving tokens to database: {e}")
+            raise Exception(f"Failed to save tokens: {e}")
+    
+    def load_tokens_from_db(self, db: Session, user_id: int) -> bool:
+        """
+        Load APS tokens from database
+        """
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return False
+            
+            if user.aps_access_token:
+                self._access_token = user.aps_access_token
+                self._refresh_token = user.aps_refresh_token
+                self._token_expires_at = user.aps_token_expires_at
+                self._user_id = user_id
+                
+                logger.info(f"Loaded APS tokens for user {user_id}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error loading tokens from database: {e}")
+            return False
+    
+    def is_token_valid(self) -> bool:
+        """
+        Check if the current token is valid and not expired
+        """
+        if not self._access_token:
+            return False
+        
+        if self._token_expires_at and datetime.now() >= self._token_expires_at:
+            return False
+        
+        return True
+    
+    def revoke_tokens(self, db: Session = None):
+        """
+        Revoke and clear tokens
+        """
+        try:
+            # Try to revoke the token on APS side
+            if self._access_token:
+                headers = {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json"
+                }
+                
+                data = {
+                    "token": self._access_token,
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret
+                }
+                
+                # Note: APS doesn't have a standard revoke endpoint, so we'll just clear locally
+                # In a real implementation, you might want to check if APS provides token revocation
+                
+            # Clear local tokens
+            self._access_token = None
+            self._refresh_token = None
+            self._token_expires_at = None
+            
+            # Clear from database if db session provided
+            if db and self._user_id:
+                user = db.query(User).filter(User.id == self._user_id).first()
+                if user:
+                    user.aps_access_token = None
+                    user.aps_refresh_token = None
+                    user.aps_token_expires_at = None
+                    db.commit()
+                    
+            self._user_id = None
+            logger.info("Revoked APS tokens")
+            
+        except Exception as e:
+            logger.error(f"Error revoking tokens: {e}")
+            # Still clear local tokens even if revocation fails
+            self._access_token = None
+            self._refresh_token = None
+            self._token_expires_at = None
+            self._user_id = None

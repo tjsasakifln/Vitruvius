@@ -28,9 +28,15 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # APS Integration Fields
+    aps_access_token = Column(Text)  # APS access token
+    aps_refresh_token = Column(Text)  # APS refresh token
+    aps_token_expires_at = Column(DateTime)  # Token expiration time
+    
     # Relationships
     projects = relationship("Project", back_populates="owner")
     solution_feedback = relationship("SolutionFeedback", back_populates="user")
+    # comments relationship defined in collaboration.py to avoid circular imports
 
 class Project(Base):
     __tablename__ = "projects"

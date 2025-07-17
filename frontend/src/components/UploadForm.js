@@ -47,6 +47,10 @@ function UploadForm({ projectId, onUploadSuccess }) {
         if (onUploadSuccess) {
           onUploadSuccess(result);
         }
+        // Force refresh of conflicts after successful upload
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
       } else {
         setMessage(`Upload failed: ${result.detail || 'Unknown error'}`);
       }

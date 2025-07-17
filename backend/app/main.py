@@ -2,7 +2,7 @@
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
 from fastapi import FastAPI
-from .api.v1.endpoints import projects, auth
+from .api.v1.endpoints import projects, auth, analytics, integrations, collaboration
 
 app = FastAPI(
     title="Vitruvius API",
@@ -17,3 +17,6 @@ def read_root():
 # Include API routers
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
+app.include_router(analytics.router, prefix="/api", tags=["analytics"])
+app.include_router(integrations.router, prefix="/api", tags=["integrations"])
+app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])

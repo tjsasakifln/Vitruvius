@@ -42,6 +42,26 @@ class Project(Base):
     status = Column(String(50), default="created")
     aps_project_id = Column(String(255))  # APS project ID for integration
     aps_hub_id = Column(String(255))      # APS hub ID for integration
+    
+    # Planning Tool Integration Fields
+    planning_tool_connected = Column(String(50))  # 'primavera', 'msproject', 'smartsheet', etc.
+    planning_tool_api_key = Column(String(500))  # Encrypted API key for planning tool
+    planning_tool_project_id = Column(String(255))  # Project ID in external planning tool
+    planning_tool_base_url = Column(String(500))  # Base URL for planning tool API
+    planning_tool_config = Column(Text)  # JSON string for additional configuration
+    
+    # Budget Tool Integration Fields  
+    budget_tool_connected = Column(String(50))  # 'sage', 'quickbooks', 'oracle_cost', etc.
+    budget_tool_api_key = Column(String(500))  # Encrypted API key for budget tool
+    budget_tool_project_id = Column(String(255))  # Project ID in external budget tool
+    budget_tool_base_url = Column(String(500))  # Base URL for budget tool API
+    budget_tool_config = Column(Text)  # JSON string for additional configuration
+    
+    # Integration Status
+    last_sync_at = Column(DateTime)  # Last successful synchronization
+    sync_status = Column(String(50), default="not_configured")  # 'not_configured', 'connected', 'syncing', 'error'
+    sync_error_message = Column(Text)  # Last sync error message
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

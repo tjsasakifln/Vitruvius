@@ -14,6 +14,7 @@ pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+websockets
 pytest
 pytest-asyncio
 pytest-cov

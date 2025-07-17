@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 import json
 import os
 from datetime import datetime
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, validator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,16 @@ class WebSocketMessage(BaseModel):
     data: Optional[Dict[str, Any]] = None
     is_typing: Optional[bool] = None
     status: Optional[str] = None
+    
+    class Config:
+        max_anystr_length = 10000  # Limit string length
+        
+    @validator('type')
+    def validate_message_type(cls, v):
+        allowed_types = ['typing', 'presence', 'ping', 'annotation_update']
+        if v not in allowed_types:
+            raise ValueError(f'Invalid message type: {v}. Allowed types: {allowed_types}')
+        return v
 
 # File upload directory
 UPLOAD_DIR = "/app/uploads/attachments"
@@ -62,6 +72,15 @@ async def websocket_endpoint(websocket: WebSocket, conflict_id: int, user_id: Op
         while True:
             data = await websocket.receive_text()
             
+            # Validate message size (max 1MB)
+            if len(data) > 1024 * 1024:
+                logger.warning(f"Message too large from user {user_id}: {len(data)} bytes")
+                await connection_manager.send_personal_message({
+                    "type": "error",
+                    "message": "Message too large"
+                }, websocket)
+                continue
+            
             # Validate WebSocket message structure
             try:
                 raw_message = json.loads(data)
@@ -70,7 +89,8 @@ async def websocket_endpoint(websocket: WebSocket, conflict_id: int, user_id: Op
                 logger.error(f"Invalid WebSocket message from user {user_id}: {e}")
                 await connection_manager.send_personal_message({
                     "type": "error",
-                    "message": "Invalid message format"
+                    "message": "Invalid message format",
+                    "details": str(e)
                 }, websocket)
                 continue
             
@@ -106,7 +126,7 @@ async def websocket_endpoint(websocket: WebSocket, conflict_id: int, user_id: Op
             elif message_type == "annotation_update":
                 # Handle real-time annotation updates with validation
                 try:
-                    raw_data = message.get("data", {})
+                    raw_data = message.data or {}
                     annotation_data = AnnotationUpdateData.parse_obj(raw_data)
                     await collaboration_manager.notify_annotation_added(
                         room_id, annotation_data.dict(), user_id

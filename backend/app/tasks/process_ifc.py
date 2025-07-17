@@ -5,7 +5,8 @@ from celery import Celery
 import os
 import json
 import hashlib
-import pickle
+# Removed pickle import for security - using JSON instead
+# import pickle
 import tempfile
 import numpy as np
 from sqlalchemy.orm import sessionmaker
@@ -18,6 +19,7 @@ from pygltflib import GLTF2
 from pydantic import BaseModel, ValidationError
 from typing import Dict, Any, Optional, List
 from ..services.bim_processor import process_ifc_file
+from ..services.sandbox_processor import create_sandbox_processor
 from ..services.rules_engine import run_prescriptive_analysis
 from ..db.models.project import Project, IFCModel, Conflict, Solution
 from ..db.database import DATABASE_URL
@@ -120,9 +122,58 @@ def get_cache_key(prefix: str, file_hash: str, suffix: str = "") -> str:
         key += f":{suffix}"
     return key
 
+def serialize_for_cache(data: any) -> any:
+    """
+    Convert complex data types to JSON-serializable format
+    
+    Args:
+        data: Data to serialize
+        
+    Returns:
+        JSON-serializable version of the data
+    """
+    if isinstance(data, dict):
+        return {k: serialize_for_cache(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [serialize_for_cache(item) for item in data]
+    elif isinstance(data, (str, int, float, bool, type(None))):
+        return data
+    elif hasattr(data, '__dict__'):
+        # Convert objects to dictionaries
+        return serialize_for_cache(data.__dict__)
+    else:
+        # Convert other types to string representation
+        return str(data)
+
+def serialize_geometry_for_cache(geometry_data: dict) -> dict:
+    """
+    Convert geometry data to JSON-serializable format
+    
+    Args:
+        geometry_data: Geometry data dictionary
+        
+    Returns:
+        JSON-serializable geometry data
+    """
+    if not isinstance(geometry_data, dict):
+        return {}
+    
+    result = {}
+    for key, value in geometry_data.items():
+        if isinstance(value, np.ndarray):
+            # Convert numpy arrays to lists
+            result[key] = value.tolist()
+        elif hasattr(value, '__dict__'):
+            # Convert objects to dictionaries
+            result[key] = serialize_for_cache(value.__dict__)
+        else:
+            result[key] = serialize_for_cache(value)
+    
+    return result
+
 def cache_ifc_processing_result(file_hash: str, result_type: str, data: any) -> bool:
     """
-    Cache IFC processing results
+    Cache IFC processing results using secure JSON serialization
     
     Args:
         file_hash: MD5 hash of the IFC file
@@ -134,7 +185,10 @@ def cache_ifc_processing_result(file_hash: str, result_type: str, data: any) -> 
     """
     try:
         cache_key = get_cache_key('result', file_hash, result_type)
-        serialized_data = pickle.dumps(data)
+        
+        # Convert complex data types to JSON-serializable format
+        safe_data = serialize_for_cache(data)
+        serialized_data = json.dumps(safe_data)
         
         safe_redis_setex(cache_key, CACHE_TTL, serialized_data)
         print(f"Cached {result_type} for file hash {file_hash}")
@@ -170,7 +224,7 @@ class AnalysisResultSchema(BaseModel):
 
 def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
     """
-    Get cached IFC processing result with validation
+    Get cached IFC processing result with validation using secure JSON deserialization
     
     Args:
         file_hash: MD5 hash of the IFC file
@@ -184,7 +238,13 @@ def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
         cached_data = safe_redis_get(cache_key)
         
         if cached_data:
-            result = pickle.loads(cached_data)
+            # Secure JSON deserialization instead of pickle
+            try:
+                result = json.loads(cached_data)
+            except json.JSONDecodeError as e:
+                print(f"Invalid JSON in cache for {result_type}: {e}")
+                safe_redis_delete(cache_key)
+                return None
             
             # Validate cached data structure based on result type
             try:
@@ -215,12 +275,13 @@ def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
         return None
 
 def cache_geometry_data(file_hash: str, geometry_data: dict) -> bool:
-    """Cache processed geometry data"""
+    """Cache processed geometry data using secure JSON serialization"""
     try:
         cache_key = get_cache_key('geometry', file_hash)
         
-        # Compress geometry data before caching
-        compressed_data = pickle.dumps(geometry_data)
+        # Convert geometry data to JSON-serializable format
+        safe_geometry = serialize_geometry_for_cache(geometry_data)
+        compressed_data = json.dumps(safe_geometry)
         
         safe_redis_setex(cache_key, CACHE_TTL, compressed_data)
         print(f"Cached geometry data for file hash {file_hash}")
@@ -239,13 +300,19 @@ class GeometryDataSchema(BaseModel):
         arbitrary_types_allowed = True
 
 def get_cached_geometry_data(file_hash: str) -> dict:
-    """Get cached geometry data with validation"""
+    """Get cached geometry data with validation using secure JSON deserialization"""
     try:
         cache_key = get_cache_key('geometry', file_hash)
         cached_data = safe_redis_get(cache_key)
         
         if cached_data:
-            geometry_data = pickle.loads(cached_data)
+            # Secure JSON deserialization instead of pickle
+            try:
+                geometry_data = json.loads(cached_data)
+            except json.JSONDecodeError as e:
+                print(f"Invalid JSON in geometry cache: {e}")
+                safe_redis_delete(cache_key)
+                return None
             
             # Validate geometry data structure
             try:
@@ -344,6 +411,16 @@ def process_ifc_task(project_id: int, file_path: str):
     try:
         print(f"Starting IFC processing for project {project_id}: {file_path}")
         
+        # Security: Validate file path
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            raise Exception(f"File not found or not accessible: {file_path}")
+        
+        # Security: Check file size again before processing
+        file_size = os.path.getsize(file_path)
+        MAX_PROCESSING_SIZE = 50 * 1024 * 1024  # 50MB
+        if file_size > MAX_PROCESSING_SIZE:
+            raise Exception(f"File too large for processing: {file_size} bytes")
+        
         # Generate file hash for caching
         file_hash = get_file_hash(file_path)
         if not file_hash:
@@ -368,9 +445,18 @@ def process_ifc_task(project_id: int, file_path: str):
         if bim_data:
             print("Using cached BIM data")
         else:
-            # Process IFC file with clash detection
-            print("Processing IFC file (no cache found)")
-            bim_data = process_ifc_file(file_path)
+            # Process IFC file with sandboxed processing
+            print("Processing IFC file in sandbox (no cache found)")
+            
+            # Create sandbox processor
+            sandbox = create_sandbox_processor()
+            
+            # Process in sandboxed environment
+            with sandbox.isolated_temp_directory() as temp_dir:
+                output_path = os.path.join(temp_dir, "output")
+                os.makedirs(output_path, exist_ok=True)
+                
+                bim_data = sandbox.process_ifc_file_sandboxed(file_path, output_path)
             
             if not bim_data.get("processed", False):
                 raise Exception(f"IFC processing failed: {bim_data.get('error', 'Unknown error')}")

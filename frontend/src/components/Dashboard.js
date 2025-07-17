@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import SolutionFeedback from './SolutionFeedback';
 import ConflictDetails from './ConflictDetails';
 import ActivityTimeline from './ActivityTimeline';
+import { SafeText, sanitizeObject } from '../utils/xssSanitizer';
 
 function Dashboard() {
   const [projects, setProjects] = useState([]);
@@ -30,7 +31,11 @@ function Dashboard() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
-      setProjects(data);
+      // Sanitize project data before setting state
+      const sanitizedProjects = data.map(project => 
+        sanitizeObject(project, ['name', 'description'], [])
+      );
+      setProjects(sanitizedProjects);
       
       if (data.length > 0) {
         setSelectedProject(data[0].id);

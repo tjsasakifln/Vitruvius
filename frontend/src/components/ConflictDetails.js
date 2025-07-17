@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { SafeText, validateAndSanitizeComment, sanitizeObject, escapeHtml } from '../utils/xssSanitizer';
 
 function ConflictDetails({ conflictId, projectId, currentUser }) {
   const [conflict, setConflict] = useState(null);
@@ -69,10 +70,22 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
         activityRes.ok ? activityRes.json() : { activities: [] }
       ]);
 
-      setConflict(conflictData);
-      setComments(commentsData.comments || []);
-      setAnnotations(annotationsData);
-      setActivity(activityData.activities || []);
+      // Sanitize data before setting state
+      const sanitizedConflict = sanitizeObject(conflictData, ['description', 'type'], []);
+      const sanitizedComments = (commentsData.comments || []).map(comment => 
+        sanitizeObject(comment, ['message', 'user.full_name'], [])
+      );
+      const sanitizedAnnotations = annotationsData.map(annotation => 
+        sanitizeObject(annotation, ['title', 'description', 'user.full_name'], [])
+      );
+      const sanitizedActivity = (activityData.activities || []).map(activity => 
+        sanitizeObject(activity, ['description', 'user.full_name'], [])
+      );
+      
+      setConflict(sanitizedConflict);
+      setComments(sanitizedComments);
+      setAnnotations(sanitizedAnnotations);
+      setActivity(sanitizedActivity);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -182,6 +195,13 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
     e.preventDefault();
     if (!newComment.trim()) return;
 
+    // Validate and sanitize comment before submission
+    const validation = validateAndSanitizeComment(newComment);
+    if (!validation.isValid) {
+      alert(`Error: ${validation.error}`);
+      return;
+    }
+
     try {
       const response = await fetch(`/api/collaboration/conflicts/${conflictId}/comments`, {
         method: 'POST',
@@ -189,7 +209,7 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: newComment,
+          message: validation.sanitized,
           comment_type: commentType,
           is_internal: isInternal
         })
@@ -319,8 +339,10 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
       }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
           <div>
-            <h3 style={{ margin: '0 0 10px 0' }}>{conflict.type || 'Unknown Type'} Conflict</h3>
-            <p><strong>Description:</strong> {conflict.description}</p>
+            <h3 style={{ margin: '0 0 10px 0' }}>
+              <SafeText text={conflict.type || 'Unknown Type'} /> Conflict
+            </h3>
+            <p><strong>Description:</strong> <SafeText text={conflict.description} /></p>
             <p><strong>Elements:</strong> {conflict.elements?.length || 0} affected</p>
           </div>
           <div>
@@ -405,8 +427,8 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                   borderRadius: '5px',
                   backgroundColor: 'white'
                 }}>
-                  <h4>{solution.type || 'Solution'}</h4>
-                  <p>{solution.description}</p>
+                  <h4><SafeText text={solution.type || 'Solution'} /></h4>
+                  <p><SafeText text={solution.description} /></p>
                   {solution.estimated_cost && (
                     <p><strong>Estimated Cost:</strong> ${solution.estimated_cost.toLocaleString()}</p>
                   )}
@@ -502,7 +524,7 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                       <div>
-                        <strong>{comment.user?.full_name || 'Unknown User'}</strong>
+                        <strong><SafeText text={comment.user?.full_name || 'Unknown User'} /></strong>
                         <span style={{ 
                           marginLeft: '10px', 
                           padding: '2px 6px', 
@@ -530,13 +552,15 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                         {comment.is_edited && ' (edited)'}
                       </small>
                     </div>
-                    <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>{comment.message}</p>
+                    <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>
+                      <SafeText text={comment.message} />
+                    </p>
                     {comment.attachments && comment.attachments.length > 0 && (
                       <div style={{ marginTop: '10px' }}>
                         <strong>Attachments:</strong>
                         {comment.attachments.map(att => (
                           <div key={att.id} style={{ marginTop: '5px' }}>
-                            📎 {att.filename} ({(att.file_size / 1024).toFixed(1)} KB)
+                            📎 <SafeText text={att.filename} /> ({(att.file_size / 1024).toFixed(1)} KB)
                           </div>
                         ))}
                       </div>
@@ -564,7 +588,9 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                   backgroundColor: annotation.is_resolved ? '#d4edda' : 'white'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <h4 style={{ margin: 0 }}>{annotation.title || `${annotation.annotation_type} annotation`}</h4>
+                    <h4 style={{ margin: 0 }}>
+                      <SafeText text={annotation.title || `${annotation.annotation_type} annotation`} />
+                    </h4>
                     <div>
                       <span style={{ 
                         padding: '4px 8px', 
@@ -587,9 +613,9 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                       </span>
                     </div>
                   </div>
-                  <p>{annotation.description}</p>
+                  <p><SafeText text={annotation.description} /></p>
                   <small style={{ color: '#6c757d' }}>
-                    Created by {annotation.user?.full_name} on {formatDateTime(annotation.created_at)}
+                    Created by <SafeText text={annotation.user?.full_name} /> on {formatDateTime(annotation.created_at)}
                   </small>
                 </div>
               ))}
@@ -615,8 +641,10 @@ function ConflictDetails({ conflictId, projectId, currentUser }) {
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <strong>{item.user?.full_name}</strong> 
-                      <span style={{ marginLeft: '10px' }}>{item.description}</span>
+                      <strong><SafeText text={item.user?.full_name} /></strong> 
+                      <span style={{ marginLeft: '10px' }}>
+                        <SafeText text={item.description} />
+                      </span>
                     </div>
                     <small style={{ color: '#6c757d' }}>
                       {formatDateTime(item.created_at)}

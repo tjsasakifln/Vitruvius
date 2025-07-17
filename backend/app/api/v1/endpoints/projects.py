@@ -1,7 +1,7 @@
 # Production use requires a separate commercial license from the Licensor.
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 from typing import List
 import os
@@ -11,11 +11,16 @@ from ...db.models.project import Project, IFCModel, Conflict, User, Solution, So
 from ...db.database import get_db
 from ...services.bim_processor import process_ifc_file
 from ...tasks.process_ifc import process_ifc_task, convert_ifc_to_gltf, convert_ifc_to_xkt, run_inter_model_clash_detection
-from ...auth.dependencies import get_current_active_user
+from ...auth.dependencies import get_current_active_user, require_project_view, require_file_upload, require_project_edit
+from ...core.exceptions import (
+    ValidationError, ResourceNotFoundError, handle_database_error, 
+    handle_file_error, handle_processing_error, FileError, ErrorCode
+)
 from ...services.rules_engine import suggest_solutions_for_conflict, create_solution_from_rules
 from ...services.feedback_service import FeedbackDataCollector
 from ...services.ml_service import Predictor
 from ...tasks.ml_tasks import train_risk_prediction_model
+from ...services.security_logger import security_logger, log_file_upload, log_validation_failure
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -60,6 +65,67 @@ def safe_file_cleanup(file_path: str) -> bool:
         return False
 
 
+def validate_ifc_content(file_content: bytes) -> bool:
+    """
+    Validate IFC file content for security and format compliance.
+    
+    Args:
+        file_content: Raw file content as bytes
+        
+    Returns:
+        True if file appears to be a valid IFC file, False otherwise
+    """
+    try:
+        # Check for basic IFC header structure
+        content_str = file_content.decode('utf-8', errors='ignore')
+        
+        # IFC files must start with specific header format
+        if not content_str.startswith('ISO-10303-21;'):
+            return False
+        
+        # Must contain HEADER section
+        if 'HEADER;' not in content_str:
+            return False
+        
+        # Must contain DATA section
+        if 'DATA;' not in content_str:
+            return False
+        
+        # Must end with ENDSEC;
+        if not content_str.rstrip().endswith('ENDSEC;'):
+            return False
+        
+        # Check for reasonable line count (prevent extremely large files)
+        lines = content_str.split('\n')
+        if len(lines) > 1000000:  # Max 1M lines
+            return False
+        
+        # Check for suspicious patterns that might indicate malicious content
+        suspicious_patterns = [
+            'javascript:', 'vbscript:', '<script',
+            'eval(', 'exec(', 'import os', 'subprocess',
+            '<?php', '<%', '__import__'
+        ]
+        
+        content_lower = content_str.lower()
+        for pattern in suspicious_patterns:
+            if pattern in content_lower:
+                return False
+        
+        # Basic validation of IFC entity structure
+        # IFC entities should follow #ID=ENTITY_TYPE(params) format
+        import re
+        entity_pattern = r'#\d+\s*=\s*[A-Z_]+\([^)]*\);'
+        if not re.search(entity_pattern, content_str):
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error validating IFC content: {e}")
+        return False
+
+
 @router.get("/", response_model=List[dict])
 def get_projects(
     current_user: User = Depends(get_current_active_user),
@@ -93,38 +159,52 @@ def create_project(
 async def upload_ifc_model(
     project_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(require_file_upload),
+    db: Session = Depends(get_db),
+    request: Request = None
 ):
     """Upload IFC model to project"""
     try:
         # Validate input parameters
         if project_id <= 0:
-            raise HTTPException(status_code=400, detail="Invalid project ID")
+            raise ValidationError("Invalid project ID provided")
         
         if not file or not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
+            raise ValidationError("No file provided")
         
         # Validate file format
         if not file.filename.lower().endswith('.ifc'):
-            raise HTTPException(status_code=400, detail="File must be IFC format")
+            raise FileError(ErrorCode.INVALID_FILE_TYPE, "File must be IFC format")
         
-        # Check file size (limit to 100MB)
-        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+        # Check file size (limit to 50MB for security)
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
         file_content = await file.read()
         if len(file_content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="File too large (max 100MB)")
+            raise FileError(ErrorCode.FILE_TOO_LARGE, "File exceeds maximum size limit of 50MB")
+        
+        # Validate IFC file content
+        if not validate_ifc_content(file_content):
+            # Log validation failure with security details
+            log_validation_failure(
+                validation_type="ifc_file_content",
+                user_id=current_user.id,
+                input_data=file.filename,
+                error="Invalid IFC file format or content",
+                request=request
+            )
+            raise FileError(ErrorCode.INVALID_FILE_TYPE, "Invalid IFC file format or content")
         
         # Reset file pointer for future reads
         await file.seek(0)
         
-        # Validate project access
-        project = db.query(Project).filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id
-        ).first()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        # Permission check is handled by require_file_upload dependency
+        # But we still need to verify project exists
+        try:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                raise ResourceNotFoundError("Project not found")
+        except Exception as e:
+            raise handle_database_error("project lookup", e)
         
         # Ensure upload directory exists
         os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -182,6 +262,15 @@ async def upload_ifc_model(
             gltf_task = convert_ifc_to_gltf.delay(file_path, gltf_path, project_id)
             xkt_task = convert_ifc_to_xkt.delay(file_path, xkt_path, project_id)
             
+            # Log successful file upload
+            log_file_upload(
+                user_id=current_user.id,
+                filename=file.filename,
+                file_size=len(file_content),
+                success=True,
+                request=request
+            )
+            
             return {
                 "message": "IFC file uploaded successfully",
                 "task_id": task.id,
@@ -193,6 +282,16 @@ async def upload_ifc_model(
         except Exception as task_err:
             # If background tasks fail, still return success but note the issue
             print(f"Warning: Background task start failed: {task_err}")
+            
+            # Log successful file upload (even if background processing failed)
+            log_file_upload(
+                user_id=current_user.id,
+                filename=file.filename,
+                file_size=len(file_content),
+                success=True,
+                request=request
+            )
+            
             return {
                 "message": "IFC file uploaded successfully, processing may be delayed",
                 "model_id": ifc_model.id,
@@ -200,8 +299,11 @@ async def upload_ifc_model(
                 "warning": "Background processing unavailable"
             }
     
-    except HTTPException:
-        # Re-raise HTTP exceptions
+    except (ValidationError, FileError, ResourceNotFoundError) as e:
+        # Clean up file if it exists
+        if 'file_path' in locals():
+            safe_file_cleanup(file_path)
+        # Re-raise application exceptions
         raise
     except Exception as e:
         # Clean up file if it exists and return error
@@ -220,17 +322,14 @@ async def upload_ifc_model(
             except Exception as db_cleanup_err:
                 print(f"Failed to clean up database record: {db_cleanup_err}")
         
-        print(f"Unexpected error in upload_ifc_model: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Internal server error during file upload"
-        )
+        # Handle as file error
+        raise handle_file_error("IFC file upload", e, len(file_content) if 'file_content' in locals() else None)
 
 
 @router.get("/{project_id}/conflicts")
 def get_project_conflicts(
     project_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_project_view),
     db: Session = Depends(get_db)
 ):
     """Get conflicts detected in project"""
@@ -239,13 +338,7 @@ def get_project_conflicts(
         if project_id <= 0:
             raise HTTPException(status_code=400, detail="Invalid project ID")
         
-        project = db.query(Project).filter(
-            Project.id == project_id,
-            Project.owner_id == current_user.id
-        ).first()
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
+        # Permission check is handled by require_project_view dependency
         # Get real conflicts from database with error handling
         conflicts = db.query(Conflict).filter(Conflict.project_id == project_id).all()
         

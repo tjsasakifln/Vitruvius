@@ -57,18 +57,41 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def temp_file():
-    """Create a temporary file for testing file uploads"""
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.ifc') as temp:
-        temp.write(b"fake IFC content for testing")
-        temp_path = temp.name
+@pytest.fixture(scope="function")
+def temp_file(tmp_path):
+    """Create a temporary file within a pytest-managed directory."""
+    temp_dir = tmp_path / "uploads"
+    temp_dir.mkdir()
+    temp_file = temp_dir / "test.ifc"
+    temp_file.write_bytes(b"fake IFC content for testing")
+    yield str(temp_file)
+    # Cleanup is managed automatically by pytest
+
+
+@pytest.fixture(scope="function")
+def persistent_temp_file(tmp_path):
+    """Create a temporary file that persists for async tasks."""
+    temp_dir = tmp_path / "uploads"
+    temp_dir.mkdir()
+    temp_file = temp_dir / "persistent_test.ifc"
     
-    yield temp_path
+    # Write more realistic IFC content
+    ifc_content = b"""ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'), '2;1');
+FILE_NAME('test.ifc', '2024-01-01T00:00:00', ('Test'), ('Test'), 'Test', 'Test', '');
+FILE_SCHEMA(('IFC2X3'));
+ENDSEC;
+DATA;
+#1 = IFCPROJECT('test', $, 'Test Project', $, $, $, $, $, $);
+#2 = IFCWALL('wall1', $, 'Wall 1', $, $, $, $, $, $);
+#3 = IFCCOLUMN('col1', $, 'Column 1', $, $, $, $, $, $);
+ENDSEC;
+END-ISO-10303-21;"""
     
-    # Cleanup
-    if os.path.exists(temp_path):
-        os.unlink(temp_path)
+    temp_file.write_bytes(ifc_content)
+    yield str(temp_file)
+    # Cleanup is managed automatically by pytest
 
 
 @pytest.fixture

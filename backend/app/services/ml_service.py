@@ -29,8 +29,7 @@ class ModelTrainer:
     
     def get_training_data(self) -> pd.DataFrame:
         """Load historical conflict data from database"""
-        db = SessionLocal()
-        try:
+        with SessionLocal() as db:
             # Query all historical conflicts
             conflicts = db.query(HistoricalConflict).all()
             
@@ -54,8 +53,6 @@ class ModelTrainer:
                 })
             
             return pd.DataFrame(data)
-        finally:
-            db.close()
     
     def preprocess_data(self, df: pd.DataFrame) -> tuple:
         """Preprocess data for training"""
@@ -181,8 +178,7 @@ class Predictor:
         if not self.model or not self.encoders or not self.scaler:
             return {"error": "ML models not available. Please train the model first."}
         
-        db = SessionLocal()
-        try:
+        with SessionLocal() as db:
             # Get project conflicts
             project = db.query(Project).filter(Project.id == project_id).first()
             if not project:
@@ -238,9 +234,6 @@ class Predictor:
                 "analyzed_conflicts": len(risk_scores),
                 "conflict_predictions": conflict_predictions
             }
-        
-        finally:
-            db.close()
     
     def _predict_single_conflict(self, features: Dict[str, Any]) -> float:
         """Predict risk for a single conflict"""

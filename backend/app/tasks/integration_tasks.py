@@ -34,40 +34,45 @@ def sync_to_planning_tool(self, project_id: int, task_update_data: Dict[str, Any
         task_update_data: Dictionary containing task update information
         conflict_id: Optional conflict ID that triggered this sync
     """
-    db: Session = next(get_db())
-    
     try:
         # Get project with integration configuration
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            logger.error(f"Project {project_id} not found")
-            return {"success": False, "error": "Project not found"}
-        
-        # Check if planning tool is configured
-        if not project.planning_tool_connected:
-            logger.info(f"No planning tool configured for project {project_id}")
-            return {"success": True, "message": "No planning tool configured"}
-        
-        # Update sync status
-        project.sync_status = "syncing"
-        db.commit()
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return {"success": False, "error": "Project not found"}
+            
+            # Check if planning tool is configured
+            if not project.planning_tool_connected:
+                logger.info(f"No planning tool configured for project {project_id}")
+                return {"success": True, "message": "No planning tool configured"}
+            
+            # Update sync status
+            project.sync_status = "syncing"
+            db.commit()
+            
+            # Get project configuration for integration
+            project_config = {
+                'planning_tool_connected': project.planning_tool_connected,
+                'planning_tool_api_key': project.planning_tool_api_key,
+                'planning_tool_base_url': project.planning_tool_base_url,
+                'planning_tool_project_id': project.planning_tool_project_id,
+                'planning_tool_config': project.planning_tool_config
+            }
         
         # Create integration service
-        services = IntegrationFactory.create_integration_from_project({
-            'planning_tool_connected': project.planning_tool_connected,
-            'planning_tool_api_key': project.planning_tool_api_key,
-            'planning_tool_base_url': project.planning_tool_base_url,
-            'planning_tool_project_id': project.planning_tool_project_id,
-            'planning_tool_config': project.planning_tool_config
-        })
+        services = IntegrationFactory.create_integration_from_project(project_config)
         
         planning_service = services.get('planning')
         if not planning_service:
-            error_msg = f"Failed to create planning service for {project.planning_tool_connected}"
+            error_msg = f"Failed to create planning service for {project_config['planning_tool_connected']}"
             logger.error(error_msg)
-            project.sync_status = "error"
-            project.sync_error_message = error_msg
-            db.commit()
+            with SessionLocal() as db:
+                project = db.query(Project).filter(Project.id == project_id).first()
+                if project:
+                    project.sync_status = "error"
+                    project.sync_error_message = error_msg
+                    db.commit()
             return {"success": False, "error": error_msg}
         
         # Create TaskUpdate from the provided data
@@ -92,35 +97,39 @@ def sync_to_planning_tool(self, project_id: int, task_update_data: Dict[str, Any
             result = planning_service.create_task(task_update)
         
         # Update project sync status based on result
-        if result.success:
-            project.sync_status = "connected"
-            project.last_sync_at = datetime.utcnow()
-            project.sync_error_message = None
-            logger.info(f"Successfully synced task to {project.planning_tool_connected} for project {project_id}")
-        else:
-            project.sync_status = "error"
-            project.sync_error_message = result.message
-            logger.error(f"Failed to sync task to {project.planning_tool_connected}: {result.message}")
-        
-        db.commit()
-        
-        return {
-            "success": result.success,
-            "message": result.message,
-            "external_id": result.external_id,
-            "integration_type": project.planning_tool_connected
-        }
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project:
+                if result.success:
+                    project.sync_status = "connected"
+                    project.last_sync_at = datetime.utcnow()
+                    project.sync_error_message = None
+                    logger.info(f"Successfully synced task to {project.planning_tool_connected} for project {project_id}")
+                else:
+                    project.sync_status = "error"
+                    project.sync_error_message = result.message
+                    logger.error(f"Failed to sync task to {project.planning_tool_connected}: {result.message}")
+                
+                db.commit()
+                
+                return {
+                    "success": result.success,
+                    "message": result.message,
+                    "external_id": result.external_id,
+                    "integration_type": project.planning_tool_connected
+                }
         
     except Exception as exc:
         logger.error(f"Error in sync_to_planning_tool: {str(exc)}")
         
         # Update project sync status on error
         try:
-            project = db.query(Project).filter(Project.id == project_id).first()
-            if project:
-                project.sync_status = "error"
-                project.sync_error_message = str(exc)
-                db.commit()
+            with SessionLocal() as db:
+                project = db.query(Project).filter(Project.id == project_id).first()
+                if project:
+                    project.sync_status = "error"
+                    project.sync_error_message = str(exc)
+                    db.commit()
         except:
             pass
         
@@ -130,9 +139,6 @@ def sync_to_planning_tool(self, project_id: int, task_update_data: Dict[str, Any
             raise self.retry(countdown=self.default_retry_delay, exc=exc)
         
         return {"success": False, "error": str(exc)}
-    
-    finally:
-        db.close()
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
@@ -145,32 +151,34 @@ def sync_to_budget_tool(self, project_id: int, cost_update_data: Dict[str, Any],
         cost_update_data: Dictionary containing cost update information
         conflict_id: Optional conflict ID that triggered this sync
     """
-    db: Session = next(get_db())
-    
     try:
         # Get project with integration configuration
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            logger.error(f"Project {project_id} not found")
-            return {"success": False, "error": "Project not found"}
-        
-        # Check if budget tool is configured
-        if not project.budget_tool_connected:
-            logger.info(f"No budget tool configured for project {project_id}")
-            return {"success": True, "message": "No budget tool configured"}
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return {"success": False, "error": "Project not found"}
+            
+            # Check if budget tool is configured
+            if not project.budget_tool_connected:
+                logger.info(f"No budget tool configured for project {project_id}")
+                return {"success": True, "message": "No budget tool configured"}
+            
+            # Get project configuration for integration
+            project_config = {
+                'budget_tool_connected': project.budget_tool_connected,
+                'budget_tool_api_key': project.budget_tool_api_key,
+                'budget_tool_base_url': project.budget_tool_base_url,
+                'budget_tool_project_id': project.budget_tool_project_id,
+                'budget_tool_config': project.budget_tool_config
+            }
         
         # Create integration service
-        services = IntegrationFactory.create_integration_from_project({
-            'budget_tool_connected': project.budget_tool_connected,
-            'budget_tool_api_key': project.budget_tool_api_key,
-            'budget_tool_base_url': project.budget_tool_base_url,
-            'budget_tool_project_id': project.budget_tool_project_id,
-            'budget_tool_config': project.budget_tool_config
-        })
+        services = IntegrationFactory.create_integration_from_project(project_config)
         
         budget_service = services.get('budget')
         if not budget_service:
-            error_msg = f"Budget tool {project.budget_tool_connected} not yet implemented"
+            error_msg = f"Budget tool {project_config['budget_tool_connected']} not yet implemented"
             logger.warning(error_msg)
             return {"success": True, "message": error_msg}
         
@@ -193,15 +201,15 @@ def sync_to_budget_tool(self, project_id: int, cost_update_data: Dict[str, Any],
             result = budget_service.create_cost_entry(cost_update)
         
         if result.success:
-            logger.info(f"Successfully synced cost to {project.budget_tool_connected} for project {project_id}")
+            logger.info(f"Successfully synced cost to {project_config['budget_tool_connected']} for project {project_id}")
         else:
-            logger.error(f"Failed to sync cost to {project.budget_tool_connected}: {result.message}")
+            logger.error(f"Failed to sync cost to {project_config['budget_tool_connected']}: {result.message}")
         
         return {
             "success": result.success,
             "message": result.message,
             "external_id": result.external_id,
-            "integration_type": project.budget_tool_connected
+            "integration_type": project_config['budget_tool_connected']
         }
         
     except Exception as exc:
@@ -213,9 +221,6 @@ def sync_to_budget_tool(self, project_id: int, cost_update_data: Dict[str, Any],
             raise self.retry(countdown=self.default_retry_delay, exc=exc)
         
         return {"success": False, "error": str(exc)}
-    
-    finally:
-        db.close()
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=300)
@@ -227,66 +232,75 @@ def sync_complete_project_schedule(self, project_id: int, schedule_data: Optiona
         project_id: ID of the Vitruvius project
         schedule_data: Optional schedule data, if not provided will be generated from conflicts
     """
-    db: Session = next(get_db())
-    
     try:
         # Get project with integration configuration
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            logger.error(f"Project {project_id} not found")
-            return {"success": False, "error": "Project not found"}
-        
-        # Check if planning tool is configured
-        if not project.planning_tool_connected:
-            logger.info(f"No planning tool configured for project {project_id}")
-            return {"success": True, "message": "No planning tool configured"}
-        
-        # Update sync status
-        project.sync_status = "syncing"
-        db.commit()
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return {"success": False, "error": "Project not found"}
+            
+            # Check if planning tool is configured
+            if not project.planning_tool_connected:
+                logger.info(f"No planning tool configured for project {project_id}")
+                return {"success": True, "message": "No planning tool configured"}
+            
+            # Update sync status
+            project.sync_status = "syncing"
+            db.commit()
+            
+            # Get project configuration for integration
+            project_config = {
+                'planning_tool_connected': project.planning_tool_connected,
+                'planning_tool_api_key': project.planning_tool_api_key,
+                'planning_tool_base_url': project.planning_tool_base_url,
+                'planning_tool_project_id': project.planning_tool_project_id,
+                'planning_tool_config': project.planning_tool_config
+            }
         
         # Create integration service
-        services = IntegrationFactory.create_integration_from_project({
-            'planning_tool_connected': project.planning_tool_connected,
-            'planning_tool_api_key': project.planning_tool_api_key,
-            'planning_tool_base_url': project.planning_tool_base_url,
-            'planning_tool_project_id': project.planning_tool_project_id,
-            'planning_tool_config': project.planning_tool_config
-        })
+        services = IntegrationFactory.create_integration_from_project(project_config)
         
         planning_service = services.get('planning')
         if not planning_service:
-            error_msg = f"Failed to create planning service for {project.planning_tool_connected}"
+            error_msg = f"Failed to create planning service for {project_config['planning_tool_connected']}"
             logger.error(error_msg)
-            project.sync_status = "error"
-            project.sync_error_message = error_msg
-            db.commit()
+            with SessionLocal() as db:
+                project = db.query(Project).filter(Project.id == project_id).first()
+                if project:
+                    project.sync_status = "error"
+                    project.sync_error_message = error_msg
+                    db.commit()
             return {"success": False, "error": error_msg}
         
         # Generate schedule data from conflicts if not provided
         if not schedule_data:
-            schedule_data = generate_schedule_from_conflicts(db, project_id)
+            with SessionLocal() as db:
+                schedule_data = generate_schedule_from_conflicts(db, project_id)
         
         # Sync the schedule
         result = planning_service.sync_project_schedule(schedule_data)
         
         # Update project sync status based on result
-        if result.success:
-            project.sync_status = "connected"
-            project.last_sync_at = datetime.utcnow()
-            project.sync_error_message = None
-            logger.info(f"Successfully synced complete schedule to {project.planning_tool_connected} for project {project_id}")
-        else:
-            project.sync_status = "error"
-            project.sync_error_message = result.message
-            logger.error(f"Failed to sync schedule to {project.planning_tool_connected}: {result.message}")
-        
-        db.commit()
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project:
+                if result.success:
+                    project.sync_status = "connected"
+                    project.last_sync_at = datetime.utcnow()
+                    project.sync_error_message = None
+                    logger.info(f"Successfully synced complete schedule to {project.planning_tool_connected} for project {project_id}")
+                else:
+                    project.sync_status = "error"
+                    project.sync_error_message = result.message
+                    logger.error(f"Failed to sync schedule to {project.planning_tool_connected}: {result.message}")
+                
+                db.commit()
         
         return {
             "success": result.success,
             "message": result.message,
-            "integration_type": project.planning_tool_connected,
+            "integration_type": project_config['planning_tool_connected'],
             "synced_data": result.data
         }
         
@@ -295,11 +309,12 @@ def sync_complete_project_schedule(self, project_id: int, schedule_data: Optiona
         
         # Update project sync status on error
         try:
-            project = db.query(Project).filter(Project.id == project_id).first()
-            if project:
-                project.sync_status = "error"
-                project.sync_error_message = str(exc)
-                db.commit()
+            with SessionLocal() as db:
+                project = db.query(Project).filter(Project.id == project_id).first()
+                if project:
+                    project.sync_status = "error"
+                    project.sync_error_message = str(exc)
+                    db.commit()
         except:
             pass
         
@@ -309,9 +324,6 @@ def sync_complete_project_schedule(self, project_id: int, schedule_data: Optiona
             raise self.retry(countdown=self.default_retry_delay, exc=exc)
         
         return {"success": False, "error": str(exc)}
-    
-    finally:
-        db.close()
 
 
 @celery_app.task
@@ -322,13 +334,12 @@ def test_integration_connection(project_id: int):
     Args:
         project_id: ID of the Vitruvius project
     """
-    db: Session = next(get_db())
-    
     try:
         # Get project with integration configuration
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return {"success": False, "error": "Project not found"}
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                return {"success": False, "error": "Project not found"}
         
         results = {}
         
@@ -384,9 +395,6 @@ def test_integration_connection(project_id: int):
     except Exception as exc:
         logger.error(f"Error in test_integration_connection: {str(exc)}")
         return {"success": False, "error": str(exc)}
-    
-    finally:
-        db.close()
 
 
 def generate_schedule_from_conflicts(db: Session, project_id: int) -> Dict[str, Any]:

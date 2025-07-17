@@ -24,6 +24,42 @@ UPLOAD_DIR = "/app/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+def ensure_file_exists(file_path: str) -> bool:
+    """
+    Verify that a file exists and is readable.
+    
+    Args:
+        file_path: Path to the file to check
+        
+    Returns:
+        True if file exists and is readable, False otherwise
+    """
+    try:
+        return os.path.exists(file_path) and os.path.isfile(file_path) and os.access(file_path, os.R_OK)
+    except Exception:
+        return False
+
+
+def safe_file_cleanup(file_path: str) -> bool:
+    """
+    Safely remove a file without raising exceptions.
+    
+    Args:
+        file_path: Path to the file to remove
+        
+    Returns:
+        True if file was removed successfully, False otherwise
+    """
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return True
+        return False
+    except Exception as e:
+        print(f"Error during file cleanup for {file_path}: {e}")
+        return False
+
+
 @router.get("/", response_model=List[dict])
 def get_projects(
     current_user: User = Depends(get_current_active_user),
@@ -101,8 +137,21 @@ async def upload_ifc_model(
         file_path = os.path.join(UPLOAD_DIR, unique_filename)
         
         # Save file to disk with error handling
-        with open(file_path, "wb") as f:
-            f.write(file_content)
+        try:
+            with open(file_path, "wb") as f:
+                f.write(file_content)
+        except OSError as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to save file to disk: {str(e)}"
+            )
+        
+        # Verify file was written successfully
+        if not ensure_file_exists(file_path):
+            raise HTTPException(
+                status_code=500, 
+                detail="File was not saved successfully"
+            )
         
         # Create IFC model record
         ifc_model = IFCModel(
@@ -122,6 +171,13 @@ async def upload_ifc_model(
         
         # Start async processing tasks with error handling
         try:
+            # Verify file still exists before starting background tasks
+            if not ensure_file_exists(file_path):
+                raise HTTPException(
+                    status_code=500, 
+                    detail="File was removed before processing could begin"
+                )
+            
             task = process_ifc_task.delay(project_id, file_path)
             gltf_task = convert_ifc_to_gltf.delay(file_path, gltf_path, project_id)
             xkt_task = convert_ifc_to_xkt.delay(file_path, xkt_path, project_id)
@@ -149,11 +205,20 @@ async def upload_ifc_model(
         raise
     except Exception as e:
         # Clean up file if it exists and return error
-        if 'file_path' in locals() and os.path.exists(file_path):
+        if 'file_path' in locals():
+            if safe_file_cleanup(file_path):
+                print(f"Cleaned up file after error: {file_path}")
+            else:
+                print(f"Failed to clean up file: {file_path}")
+        
+        # Clean up database record if it was created
+        if 'ifc_model' in locals():
             try:
-                os.remove(file_path)
-            except:
-                pass  # Ignore cleanup errors
+                db.delete(ifc_model)
+                db.commit()
+                print(f"Cleaned up database record for failed upload")
+            except Exception as db_cleanup_err:
+                print(f"Failed to clean up database record: {db_cleanup_err}")
         
         print(f"Unexpected error in upload_ifc_model: {e}")
         raise HTTPException(

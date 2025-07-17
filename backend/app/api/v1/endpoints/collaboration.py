@@ -7,6 +7,10 @@ from typing import List, Optional, Dict, Any
 import json
 import os
 from datetime import datetime
+from pydantic import BaseModel, ValidationError
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ...db.database import get_db
 from ...auth.dependencies import get_current_active_user
@@ -18,6 +22,29 @@ from ...db.models.collaboration import (
 from ...services.websocket_manager import connection_manager, collaboration_manager
 
 router = APIRouter(prefix="/collaboration", tags=["collaboration"])
+
+# WebSocket message validation schemas
+class AnnotationUpdateData(BaseModel):
+    annotation_id: Optional[int] = None
+    position: Optional[Dict[str, Any]] = None
+    visual_data: Optional[Dict[str, Any]] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    
+    class Config:
+        extra = "allow"
+
+class TypingIndicatorData(BaseModel):
+    is_typing: bool
+    
+class PresenceData(BaseModel):
+    status: str
+    
+class WebSocketMessage(BaseModel):
+    type: str
+    data: Optional[Dict[str, Any]] = None
+    is_typing: Optional[bool] = None
+    status: Optional[str] = None
 
 # File upload directory
 UPLOAD_DIR = "/app/uploads/attachments"
@@ -34,21 +61,40 @@ async def websocket_endpoint(websocket: WebSocket, conflict_id: int, user_id: Op
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
             
-            message_type = message.get("type")
+            # Validate WebSocket message structure
+            try:
+                raw_message = json.loads(data)
+                message = WebSocketMessage.parse_obj(raw_message)
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.error(f"Invalid WebSocket message from user {user_id}: {e}")
+                await connection_manager.send_personal_message({
+                    "type": "error",
+                    "message": "Invalid message format"
+                }, websocket)
+                continue
+            
+            message_type = message.type
             
             if message_type == "typing":
-                # Handle typing indicators
-                await connection_manager.send_typing_indicator(
-                    room_id, user_id, message.get("is_typing", False)
-                )
+                # Handle typing indicators with validation
+                try:
+                    typing_data = TypingIndicatorData.parse_obj({"is_typing": message.is_typing})
+                    await connection_manager.send_typing_indicator(
+                        room_id, user_id, typing_data.is_typing
+                    )
+                except ValidationError as e:
+                    logger.error(f"Invalid typing indicator data from user {user_id}: {e}")
             
             elif message_type == "presence":
-                # Handle user presence updates
-                await connection_manager.send_user_presence(
-                    room_id, user_id, message.get("status", "online")
-                )
+                # Handle user presence updates with validation
+                try:
+                    presence_data = PresenceData.parse_obj({"status": message.status or "online"})
+                    await connection_manager.send_user_presence(
+                        room_id, user_id, presence_data.status
+                    )
+                except ValidationError as e:
+                    logger.error(f"Invalid presence data from user {user_id}: {e}")
             
             elif message_type == "ping":
                 # Handle ping/keepalive
@@ -58,10 +104,20 @@ async def websocket_endpoint(websocket: WebSocket, conflict_id: int, user_id: Op
                 }, websocket)
             
             elif message_type == "annotation_update":
-                # Handle real-time annotation updates
-                await collaboration_manager.notify_annotation_added(
-                    room_id, message.get("data", {}), user_id
-                )
+                # Handle real-time annotation updates with validation
+                try:
+                    raw_data = message.get("data", {})
+                    annotation_data = AnnotationUpdateData.parse_obj(raw_data)
+                    await collaboration_manager.notify_annotation_added(
+                        room_id, annotation_data.dict(), user_id
+                    )
+                except ValidationError as e:
+                    logger.error(f"Invalid annotation_update data from user {user_id}: {e}")
+                    await connection_manager.send_personal_message({
+                        "type": "error",
+                        "message": "Invalid annotation data format",
+                        "details": str(e)
+                    }, websocket)
             
             # Update last activity
             if websocket in connection_manager.connection_metadata:

@@ -358,6 +358,12 @@ def suggest_solutions_for_conflict(conflict_id: int, project_id: int, db: Sessio
     # Get the conflict
     conflict = db.query(Conflict).filter(Conflict.id == conflict_id).first()
     if not conflict:
+        logger.warning(f"Conflict not found for ID {conflict_id}")
+        return []
+    
+    # Validate conflict has required attributes
+    if not conflict.conflict_type:
+        logger.warning(f"Conflict {conflict_id} has no conflict_type")
         return []
     
     # Get existing solutions for this conflict type, ordered by confidence
@@ -365,6 +371,11 @@ def suggest_solutions_for_conflict(conflict_id: int, project_id: int, db: Sessio
         Conflict.conflict_type == conflict.conflict_type,
         Conflict.project_id == project_id
     ).order_by(Solution.confidence_score.desc()).all()
+    
+    # Check if solutions query returned valid results
+    if not solutions:
+        logger.info(f"No solutions found for conflict type {conflict.conflict_type} in project {project_id}")
+        return []
     
     # Convert to dictionaries for response
     solution_suggestions = []
@@ -390,9 +401,30 @@ def calculate_solution_cost_with_project_params(solution_data: Dict[str, Any], p
     """
     from ..db.models.project import ProjectCost
     
+    # Validate input parameters
+    if not solution_data:
+        logger.warning("Solution data is None or empty, using default cost")
+        return 1000.0
+    
+    if not isinstance(solution_data, dict):
+        logger.error(f"Solution data must be a dictionary, got {type(solution_data)}")
+        return 1000.0
+    
     # Get project cost parameters
     project_costs = db.query(ProjectCost).filter(ProjectCost.project_id == project_id).all()
-    cost_map = {cost.parameter_name: cost.cost for cost in project_costs}
+    
+    # Validate project costs query result
+    if project_costs is None:
+        logger.warning(f"No project costs found for project {project_id}")
+        project_costs = []
+    
+    # Build cost map with null checks
+    cost_map = {}
+    for cost in project_costs:
+        if cost and cost.parameter_name and cost.cost is not None:
+            cost_map[cost.parameter_name] = cost.cost
+        else:
+            logger.warning(f"Invalid cost record found: {cost}")
     
     # Default cost factors if not specified in project
     default_costs = {
@@ -428,9 +460,25 @@ def calculate_solution_cost_with_project_params(solution_data: Dict[str, Any], p
     
     # Apply complexity multiplier based on confidence score
     confidence_score = solution_data.get("confidence_score", 1.0)
+    
+    # Validate confidence score
+    if confidence_score is None or not isinstance(confidence_score, (int, float)):
+        logger.warning(f"Invalid confidence score {confidence_score}, using default")
+        confidence_score = 1.0
+    
+    # Ensure confidence score is within valid range
+    confidence_score = max(0.1, min(confidence_score, 1.0))
+    
     complexity_multiplier = 2.0 - confidence_score  # Lower confidence = higher cost
     
-    return base_cost * complexity_multiplier
+    # Validate final cost calculation
+    final_cost = base_cost * complexity_multiplier
+    
+    if final_cost <= 0:
+        logger.warning(f"Invalid final cost {final_cost}, using default")
+        final_cost = 1000.0
+    
+    return final_cost
 
 
 def create_solution_from_rules(conflict_id: int, solution_data: Dict[str, Any], project_id: int, db: Session) -> Dict[str, Any]:
@@ -439,19 +487,38 @@ def create_solution_from_rules(conflict_id: int, solution_data: Dict[str, Any], 
     """
     from ..db.models.project import Solution
     
+    # Validate input parameters
+    if not solution_data:
+        logger.error("Solution data is None or empty")
+        return {}
+    
+    if not isinstance(solution_data, dict):
+        logger.error(f"Solution data must be a dictionary, got {type(solution_data)}")
+        return {}
+    
     # Calculate cost using project parameters
     estimated_cost = calculate_solution_cost_with_project_params(solution_data, project_id, db)
+    
+    # Validate estimated cost
+    if estimated_cost is None or estimated_cost < 0:
+        logger.warning(f"Invalid estimated cost {estimated_cost}, using default value")
+        estimated_cost = 1000.0  # Default cost
     
     # Create solution record
     solution = Solution(
         conflict_id=conflict_id,
         solution_type=solution_data.get("type", "generic"),
-        description=solution.get("description", ""),
+        description=solution_data.get("description", ""),  # Fixed: was using 'solution' instead of 'solution_data'
         estimated_cost=int(estimated_cost * 100),  # Convert to cents
         estimated_time=solution_data.get("estimated_time", 5),
         confidence_score=solution_data.get("confidence_score", 1.0),
         status="proposed"
     )
+    
+    # Validate solution object before database operation
+    if not solution.solution_type:
+        logger.warning("Solution type is empty, using default")
+        solution.solution_type = "generic"
     
     db.add(solution)
     db.commit()

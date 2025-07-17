@@ -15,6 +15,8 @@ import ifcopenshell
 import ifcopenshell.geom
 import trimesh
 from pygltflib import GLTF2
+from pydantic import BaseModel, ValidationError
+from typing import Dict, Any, Optional, List
 from ..services.bim_processor import process_ifc_file
 from ..services.rules_engine import run_prescriptive_analysis
 from ..db.models.project import Project, IFCModel, Conflict, Solution
@@ -142,9 +144,33 @@ def cache_ifc_processing_result(file_hash: str, result_type: str, data: any) -> 
         print(f"Error caching result: {str(e)}")
         return False
 
+class CachedResultSchema(BaseModel):
+    processed: bool
+    error: Optional[str] = None
+    model_info: Optional[Dict[str, Any]] = None
+    elements: Optional[List[Dict[str, Any]]] = None
+    
+    class Config:
+        extra = "allow"
+
+class ConflictSchema(BaseModel):
+    type: str
+    severity: str
+    description: str
+    elements: List[str]
+    
+    class Config:
+        extra = "allow"
+
+class AnalysisResultSchema(BaseModel):
+    analysis_results: List[Dict[str, Any]]
+    
+    class Config:
+        extra = "allow"
+
 def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
     """
-    Get cached IFC processing result
+    Get cached IFC processing result with validation
     
     Args:
         file_hash: MD5 hash of the IFC file
@@ -159,8 +185,28 @@ def get_cached_ifc_processing_result(file_hash: str, result_type: str) -> any:
         
         if cached_data:
             result = pickle.loads(cached_data)
-            print(f"Retrieved cached {result_type} for file hash {file_hash}")
-            return result
+            
+            # Validate cached data structure based on result type
+            try:
+                if result_type == 'bim_data':
+                    validated_result = CachedResultSchema.parse_obj(result)
+                    result = validated_result.dict()
+                elif result_type == 'conflicts':
+                    if isinstance(result, list):
+                        validated_conflicts = [ConflictSchema.parse_obj(item) for item in result]
+                        result = [conflict.dict() for conflict in validated_conflicts]
+                elif result_type == 'analysis_results':
+                    validated_result = AnalysisResultSchema.parse_obj(result)
+                    result = validated_result.dict()
+                    
+                print(f"Retrieved and validated cached {result_type} for file hash {file_hash}")
+                return result
+                
+            except ValidationError as ve:
+                print(f"Cached data validation failed for {result_type}: {ve}")
+                # Remove invalid cached data
+                safe_redis_delete(cache_key)
+                return None
             
         return None
         
@@ -184,16 +230,39 @@ def cache_geometry_data(file_hash: str, geometry_data: dict) -> bool:
         print(f"Error caching geometry data: {str(e)}")
         return False
 
+class GeometryDataSchema(BaseModel):
+    """
+    Schema for validating geometry data structure
+    """
+    class Config:
+        extra = "allow"
+        arbitrary_types_allowed = True
+
 def get_cached_geometry_data(file_hash: str) -> dict:
-    """Get cached geometry data"""
+    """Get cached geometry data with validation"""
     try:
         cache_key = get_cache_key('geometry', file_hash)
         cached_data = safe_redis_get(cache_key)
         
         if cached_data:
             geometry_data = pickle.loads(cached_data)
-            print(f"Retrieved cached geometry data for file hash {file_hash}")
-            return geometry_data
+            
+            # Validate geometry data structure
+            try:
+                if isinstance(geometry_data, dict):
+                    validated_data = GeometryDataSchema.parse_obj(geometry_data)
+                    geometry_data = validated_data.dict()
+                    print(f"Retrieved and validated cached geometry data for file hash {file_hash}")
+                    return geometry_data
+                else:
+                    print(f"Invalid geometry data type for file hash {file_hash}")
+                    safe_redis_delete(cache_key)
+                    return None
+                    
+            except ValidationError as ve:
+                print(f"Geometry data validation failed: {ve}")
+                safe_redis_delete(cache_key)
+                return None
             
         return None
         
@@ -272,8 +341,6 @@ def process_ifc_task(project_id: int, file_path: str):
     """
     Celery task to process an IFC file asynchronously with clash detection and caching.
     """
-    db = SessionLocal()
-    
     try:
         print(f"Starting IFC processing for project {project_id}: {file_path}")
         
@@ -283,14 +350,15 @@ def process_ifc_task(project_id: int, file_path: str):
             print("Warning: Could not generate file hash, proceeding without cache")
         
         # Update IFC model status
-        ifc_model = db.query(IFCModel).filter(
-            IFCModel.project_id == project_id,
-            IFCModel.file_path == file_path
-        ).first()
-        
-        if ifc_model:
-            ifc_model.status = "processing"
-            db.commit()
+        with SessionLocal() as db:
+            ifc_model = db.query(IFCModel).filter(
+                IFCModel.project_id == project_id,
+                IFCModel.file_path == file_path
+            ).first()
+            
+            if ifc_model:
+                ifc_model.status = "processing"
+                db.commit()
         
         # Check cache for BIM data
         bim_data = None
@@ -328,34 +396,35 @@ def process_ifc_task(project_id: int, file_path: str):
                 cache_ifc_processing_result(file_hash, 'conflicts', conflicts_detected)
         
         # Store conflicts in database
-        for conflict_data in conflicts_detected:
-            # Get element objects for this conflict
-            element_ifc_ids = conflict_data["elements"]
-            conflict_elements = db.query(Element).filter(
-                Element.ifc_id.in_(element_ifc_ids)
-            ).all()
+        with SessionLocal() as db:
+            for conflict_data in conflicts_detected:
+                # Get element objects for this conflict
+                element_ifc_ids = conflict_data["elements"]
+                conflict_elements = db.query(Element).filter(
+                    Element.ifc_id.in_(element_ifc_ids)
+                ).all()
+                
+                # Check if conflict already exists to avoid duplicates
+                # Create a simple check based on project and conflict type
+                existing_conflict = db.query(Conflict).filter(
+                    Conflict.project_id == project_id,
+                    Conflict.conflict_type == conflict_data["type"],
+                    Conflict.description == conflict_data["description"]
+                ).first()
+                
+                if not existing_conflict:
+                    conflict = Conflict(
+                        project_id=project_id,
+                        conflict_type=conflict_data["type"],
+                        severity=conflict_data["severity"],
+                        description=conflict_data["description"],
+                        status="detected"
+                    )
+                    # Add the many-to-many relationship with elements
+                    conflict.elements = conflict_elements
+                    db.add(conflict)
             
-            # Check if conflict already exists to avoid duplicates
-            # Create a simple check based on project and conflict type
-            existing_conflict = db.query(Conflict).filter(
-                Conflict.project_id == project_id,
-                Conflict.conflict_type == conflict_data["type"],
-                Conflict.description == conflict_data["description"]
-            ).first()
-            
-            if not existing_conflict:
-                conflict = Conflict(
-                    project_id=project_id,
-                    conflict_type=conflict_data["type"],
-                    severity=conflict_data["severity"],
-                    description=conflict_data["description"],
-                    status="detected"
-                )
-                # Add the many-to-many relationship with elements
-                conflict.elements = conflict_elements
-                db.add(conflict)
-        
-        db.commit()
+            db.commit()
         
         # Check cache for AI analysis results
         analysis_results = None
@@ -374,30 +443,31 @@ def process_ifc_task(project_id: int, file_path: str):
                 cache_ifc_processing_result(file_hash, 'analysis_results', analysis_results)
         
         # Store AI-generated solutions
-        for result in analysis_results.get("analysis_results", []):
-            conflict_id = get_conflict_id_by_elements(db, project_id, result["conflict"]["elements"])
+        with SessionLocal() as db:
+            for result in analysis_results.get("analysis_results", []):
+                conflict_id = get_conflict_id_by_elements(db, project_id, result["conflict"]["elements"])
+                
+                if conflict_id:
+                    for solution_data in result["solutions"]:
+                        # Check if solution already exists
+                        existing_solution = db.query(Solution).filter(
+                            Solution.conflict_id == conflict_id,
+                            Solution.solution_type == solution_data["type"]
+                        ).first()
+                        
+                        if not existing_solution:
+                            solution = Solution(
+                                conflict_id=conflict_id,
+                                solution_type=solution_data["type"],
+                                description=solution_data["description"],
+                                estimated_cost=int(solution_data["estimated_cost"] * 100),  # Store in cents
+                                estimated_time=int(solution_data["estimated_time"]),
+                                confidence_score=80,  # Default confidence score
+                                status="proposed"
+                            )
+                            db.add(solution)
             
-            if conflict_id:
-                for solution_data in result["solutions"]:
-                    # Check if solution already exists
-                    existing_solution = db.query(Solution).filter(
-                        Solution.conflict_id == conflict_id,
-                        Solution.solution_type == solution_data["type"]
-                    ).first()
-                    
-                    if not existing_solution:
-                        solution = Solution(
-                            conflict_id=conflict_id,
-                            solution_type=solution_data["type"],
-                            description=solution_data["description"],
-                            estimated_cost=int(solution_data["estimated_cost"] * 100),  # Store in cents
-                            estimated_time=int(solution_data["estimated_time"]),
-                            confidence_score=80,  # Default confidence score
-                            status="proposed"
-                        )
-                        db.add(solution)
-        
-        db.commit()
+            db.commit()
         
         # Cache metadata if not already cached
         if file_hash:
@@ -414,11 +484,17 @@ def process_ifc_task(project_id: int, file_path: str):
                 cache_model_metadata(file_hash, metadata)
         
         # Update IFC model status
-        if ifc_model:
-            ifc_model.status = "processed"
-            from datetime import datetime
-            ifc_model.processed_at = datetime.utcnow()
-            db.commit()
+        with SessionLocal() as db:
+            ifc_model = db.query(IFCModel).filter(
+                IFCModel.project_id == project_id,
+                IFCModel.file_path == file_path
+            ).first()
+            
+            if ifc_model:
+                ifc_model.status = "processed"
+                from datetime import datetime
+                ifc_model.processed_at = datetime.utcnow()
+                db.commit()
         
         print(f"IFC processing completed for project {project_id}")
         
@@ -440,18 +516,21 @@ def process_ifc_task(project_id: int, file_path: str):
         print(f"Error processing IFC file: {str(e)}")
 
         # Update status to failed
-        if 'ifc_model' in locals() and ifc_model:
-            ifc_model.status = "failed"
-            db.commit()
+        with SessionLocal() as db:
+            ifc_model = db.query(IFCModel).filter(
+                IFCModel.project_id == project_id,
+                IFCModel.file_path == file_path
+            ).first()
+            
+            if ifc_model:
+                ifc_model.status = "failed"
+                db.commit()
 
         return {
             "status": "failed",
             "error": str(e),
             "project_id": project_id
         }
-
-    finally:
-        db.close()
 
 
 def perform_clash_detection(bim_data):
@@ -631,8 +710,7 @@ def convert_ifc_to_gltf(ifc_file_path: str, output_gltf_path: str, project_id: i
             f.write(gltf_data)
         
         # Update database with glTF path
-        db = SessionLocal()
-        try:
+        with SessionLocal() as db:
             ifc_model = db.query(IFCModel).filter(
                 IFCModel.project_id == project_id,
                 IFCModel.file_path == ifc_file_path
@@ -642,9 +720,6 @@ def convert_ifc_to_gltf(ifc_file_path: str, output_gltf_path: str, project_id: i
                 # Store glTF path in the model (we'll need to add this field)
                 ifc_model.gltf_path = output_gltf_path
                 db.commit()
-                
-        finally:
-            db.close()
         
         print(f"IFC to glTF conversion completed successfully")
         
@@ -762,20 +837,19 @@ def run_inter_model_clash_detection(project_id: int):
     """
     Run clash detection between multiple IFC models in a project (federated models)
     """
-    db = SessionLocal()
-    
     try:
         print(f"Starting inter-model clash detection for project {project_id}")
         
         # Get all IFC models for the project
-        project = db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            return {"status": "failed", "error": "Project not found"}
-        
-        ifc_models = db.query(IFCModel).filter(IFCModel.project_id == project_id).all()
-        
-        if len(ifc_models) < 2:
-            return {"status": "skipped", "message": "Need at least 2 models for inter-model clash detection"}
+        with SessionLocal() as db:
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if not project:
+                return {"status": "failed", "error": "Project not found"}
+            
+            ifc_models = db.query(IFCModel).filter(IFCModel.project_id == project_id).all()
+            
+            if len(ifc_models) < 2:
+                return {"status": "skipped", "message": "Need at least 2 models for inter-model clash detection"}
         
         # Process all combinations of model pairs
         from itertools import combinations
@@ -811,34 +885,35 @@ def run_inter_model_clash_detection(project_id: int):
                     cache_ifc_processing_result(cache_key, 'inter_model_clashes', inter_clashes)
             
             # Store clashes in database
-            for clash_data in inter_clashes:
-                # Check if clash already exists
-                existing_clash = db.query(Conflict).filter(
-                    Conflict.project_id == project_id,
-                    Conflict.description.contains(clash_data["description"])
-                ).first()
-                
-                if not existing_clash:
-                    conflict = Conflict(
-                        project_id=project_id,
-                        conflict_type=clash_data["type"],
-                        severity=clash_data["severity"],
-                        description=clash_data["description"],
-                        status="detected"
-                    )
-                    db.add(conflict)
+            with SessionLocal() as db:
+                for clash_data in inter_clashes:
+                    # Check if clash already exists
+                    existing_clash = db.query(Conflict).filter(
+                        Conflict.project_id == project_id,
+                        Conflict.description.contains(clash_data["description"])
+                    ).first()
                     
-                    # Link elements from both models
-                    for element_id in clash_data["elements"]:
-                        element = db.query(Element).filter(
-                            Element.ifc_id == element_id
-                        ).first()
-                        if element:
-                            conflict.elements.append(element)
+                    if not existing_clash:
+                        conflict = Conflict(
+                            project_id=project_id,
+                            conflict_type=clash_data["type"],
+                            severity=clash_data["severity"],
+                            description=clash_data["description"],
+                            status="detected"
+                        )
+                        db.add(conflict)
+                        
+                        # Link elements from both models
+                        for element_id in clash_data["elements"]:
+                            element = db.query(Element).filter(
+                                Element.ifc_id == element_id
+                            ).first()
+                            if element:
+                                conflict.elements.append(element)
+                
+                db.commit()
             
             total_clashes += len(inter_clashes)
-        
-        db.commit()
         
         print(f"Inter-model clash detection completed. Found {total_clashes} clashes")
         
@@ -855,9 +930,6 @@ def run_inter_model_clash_detection(project_id: int):
             "status": "failed",
             "error": str(e)
         }
-    
-    finally:
-        db.close()
 
 
 def detect_clashes_between_models(model1_path: str, model2_path: str):

@@ -4,8 +4,11 @@
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+import logging
 from ..db.models.project import Conflict, SolutionFeedback, Solution, Element, Project
 from ..db.models.analytics import HistoricalConflict
+
+logger = logging.getLogger(__name__)
 
 class FeedbackDataCollector:
     """Service to collect and store feedback data for ML training"""
@@ -17,19 +20,48 @@ class FeedbackDataCollector:
         """
         Extract and store historical conflict data from feedback for ML training
         """
+        # Validate input feedback
+        if not feedback:
+            logger.warning("Feedback is None, cannot collect data")
+            return
+        
+        if not feedback.conflict_id:
+            logger.warning("Feedback has no conflict_id, cannot collect data")
+            return
+        
         # Get the conflict and its associated elements
         conflict = self.db.query(Conflict).filter(Conflict.id == feedback.conflict_id).first()
         if not conflict:
+            logger.warning(f"Conflict not found for feedback {feedback.id}")
             return
         
         # Get the elements involved in the conflict
         elements = conflict.elements
-        if len(elements) < 2:
-            return  # Need at least 2 elements for meaningful analysis
+        if not elements:
+            logger.warning(f"Conflict {conflict.id} has no elements, cannot collect feedback data")
+            return
         
-        # Extract element categories and disciplines
+        if len(elements) < 2:
+            logger.warning(f"Conflict {conflict.id} has fewer than 2 elements, cannot collect feedback data")
+            return
+        
+        # Safely extract element categories and disciplines
         element_1 = elements[0]
         element_2 = elements[1]
+        
+        # Validate elements are not None
+        if not element_1 or not element_2:
+            logger.warning(f"One or both elements are None for conflict {conflict.id}")
+            return
+        
+        # Validate elements have required attributes
+        if not hasattr(element_1, 'element_type') or not hasattr(element_2, 'element_type'):
+            logger.warning(f"Elements missing element_type attribute for conflict {conflict.id}")
+            return
+        
+        if not element_1.element_type or not element_2.element_type:
+            logger.warning(f"Elements have empty element_type for conflict {conflict.id}")
+            return
         
         # Determine if feedback is positive based on effectiveness rating
         feedback_positive = False
@@ -46,9 +78,19 @@ class FeedbackDataCollector:
         if feedback.solution_id:
             solution = self.db.query(Solution).filter(Solution.id == feedback.solution_id).first()
             if solution:
-                if solution.estimated_cost:
+                # Safely extract cost with null checks
+                if solution.estimated_cost is not None and solution.estimated_cost > 0:
                     resolution_cost = solution.estimated_cost / 100.0  # Convert from cents
-                resolution_time_days = solution.estimated_time
+                else:
+                    logger.info(f"Solution {solution.id} has no valid estimated_cost")
+                
+                # Safely extract time with null checks
+                if solution.estimated_time is not None and solution.estimated_time > 0:
+                    resolution_time_days = solution.estimated_time
+                else:
+                    logger.info(f"Solution {solution.id} has no valid estimated_time")
+            else:
+                logger.warning(f"Solution not found for ID {feedback.solution_id}")
         
         # Create historical conflict record
         historical_conflict = HistoricalConflict(
@@ -70,7 +112,11 @@ class FeedbackDataCollector:
         
         # Trigger integration sync if feedback indicates a solution was implemented
         if feedback_positive and feedback.solution_id:
-            self._trigger_integration_sync(feedback, solution)
+            # Only trigger if solution was found
+            if 'solution' in locals() and solution:
+                self._trigger_integration_sync(feedback, solution)
+            else:
+                logger.warning(f"Cannot trigger integration sync: solution not found for feedback {feedback.id}")
         
         return historical_conflict
     
@@ -95,16 +141,31 @@ class FeedbackDataCollector:
         """
         Trigger async integration sync when a solution is implemented
         """
+        # Validate input parameters
+        if not feedback:
+            logger.warning("Feedback is None, cannot trigger integration sync")
+            return
+        
+        if not feedback.conflict_id:
+            logger.warning("Feedback has no conflict_id, cannot trigger integration sync")
+            return
+        
         try:
             from ..tasks.integration_tasks import sync_to_planning_tool, sync_to_budget_tool
             
-            # Get the conflict and project
+            # Get the conflict and project with null checks
             conflict = self.db.query(Conflict).filter(Conflict.id == feedback.conflict_id).first()
             if not conflict:
+                logger.warning(f"Conflict not found for feedback {feedback.id}")
+                return
+            
+            if not conflict.project_id:
+                logger.warning(f"Conflict {conflict.id} has no project_id")
                 return
             
             project = self.db.query(Project).filter(Project.id == conflict.project_id).first()
             if not project:
+                logger.warning(f"Project not found for conflict {conflict.id}")
                 return
             
             # Prepare task update data for planning tool sync
@@ -115,32 +176,37 @@ class FeedbackDataCollector:
                 'status': 'in_progress' if feedback.effectiveness_rating and feedback.effectiveness_rating >= 4 else 'needs_attention'
             }
             
-            # Add cost information if available
-            if solution and solution.estimated_cost:
+            # Add cost information if available with null checks
+            if solution and solution.estimated_cost is not None and solution.estimated_cost > 0:
                 task_update_data['cost'] = solution.estimated_cost / 100.0  # Convert from cents
                 
                 # Prepare cost update data for budget tool sync
+                conflict_type = conflict.conflict_type or "unknown"
                 cost_update_data = {
-                    'cost_category': f"{conflict.conflict_type}_resolution",
+                    'cost_category': f"{conflict_type}_resolution",
                     'amount': solution.estimated_cost / 100.0,
-                    'description': f"Cost for resolving {conflict.conflict_type} conflict",
+                    'description': f"Cost for resolving {conflict_type} conflict",
                     'budget_code': f"CONFLICT_{conflict.id}",
                     'effective_date': datetime.utcnow().isoformat()
                 }
                 
                 # Trigger budget sync if budget tool is configured
-                if project.budget_tool_connected:
+                if hasattr(project, 'budget_tool_connected') and project.budget_tool_connected:
                     sync_to_budget_tool.delay(
                         project_id=project.id,
                         cost_update_data=cost_update_data,
                         conflict_id=conflict.id
                     )
+                else:
+                    logger.info(f"Budget tool not connected for project {project.id}")
             
-            # Add time information if available
-            if solution and solution.estimated_time:
+            # Add time information if available with null checks
+            if solution and solution.estimated_time is not None and solution.estimated_time > 0:
                 task_update_data['duration_change_days'] = solution.estimated_time
                 task_update_data['start_date'] = datetime.utcnow().isoformat()
                 task_update_data['end_date'] = (datetime.utcnow() + timedelta(days=solution.estimated_time)).isoformat()
+            else:
+                logger.info(f"No valid estimated_time found for solution {solution.id if solution else 'None'}")
             
             # Set progress based on feedback effectiveness
             if feedback.effectiveness_rating:
@@ -152,19 +218,21 @@ class FeedbackDataCollector:
                     task_update_data['progress_percentage'] = 10.0  # Under review
             
             # Trigger planning tool sync if planning tool is configured
-            if project.planning_tool_connected:
+            if hasattr(project, 'planning_tool_connected') and project.planning_tool_connected:
                 sync_to_planning_tool.delay(
                     project_id=project.id,
                     task_update_data=task_update_data,
                     conflict_id=conflict.id
                 )
+            else:
+                logger.info(f"Planning tool not connected for project {project.id}")
                 
         except ImportError:
             # Celery tasks not available (e.g., in testing)
             pass
         except Exception as e:
             # Log error but don't fail the feedback collection
-            print(f"Error triggering integration sync: {str(e)}")
+            logger.error(f"Error triggering integration sync: {str(e)}", exc_info=True)
 
 
 class IntegrationSyncService:
@@ -186,10 +254,16 @@ class IntegrationSyncService:
             
             conflict = self.db.query(Conflict).filter(Conflict.id == conflict_id).first()
             if not conflict:
+                logger.warning(f"Conflict not found for ID {conflict_id}")
+                return
+            
+            if not conflict.project_id:
+                logger.warning(f"Conflict {conflict_id} has no project_id")
                 return
             
             project = self.db.query(Project).filter(Project.id == conflict.project_id).first()
             if not project:
+                logger.warning(f"Project not found for conflict {conflict_id}")
                 return
             
             # Prepare task update data

@@ -2,7 +2,6 @@
 
 **BIM Coordination Platform that cuts AEC project rework by up to 70%**
 
-[![Build Status](https://img.shields.io/github/workflow/status/tjsasakifln/Vitruvius/CI)](https://github.com/tjsasakifln/Vitruvius/actions)
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![GitHub Stars](https://img.shields.io/github/stars/tjsasakifln/Vitruvius?style=social)](https://github.com/tjsasakifln/Vitruvius/stargazers)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
@@ -20,7 +19,7 @@ Vitruvius revolutionizes **BIM coordination** with **prescriptive AI** that auto
 
 Vitruvius **eliminates 70% of these costs** by automating clash detection, prescribing AI-based solutions, and providing quantified metrics for decision-making.
 
-![Vitruvius IFC Viewer](./docs/assets/vitruvius-ifc-demo.gif)
+![Vitruvius IFC Viewer Demo](https://via.placeholder.com/800x400/f0f0f0/333333?text=Vitruvius+IFC+Viewer+%E2%80%A2+Real-time+Clash+Detection)
 *Real-time manipulation of IFC models with automatic clash detection*
 
 ## 🏗️ Technology Stack
@@ -31,7 +30,7 @@ Vitruvius **eliminates 70% of these costs** by automating clash detection, presc
 - **Frontend**: React + Three.js + WebGL Rendering
 - **BIM Engine**: APS Forge + IFC Processing + Geometric Analysis
 
-📚 **[Complete Technical Documentation →](./docs/README.md)**
+📚 **Testing Documentation** (in development) | 🔒 **Security Guidelines** (in development)
 
 ## 🏗️ Architecture
 
@@ -72,12 +71,17 @@ Vitruvius **eliminates 70% of these costs** by automating clash detection, presc
    cd Vitruvius
    ```
 
-2. **Start the development environment:**
+2. **Initialize database:**
+   ```bash
+   python backend/app/db/init_db.py
+   ```
+
+3. **Start the development environment:**
    ```bash
    docker-compose up --build
    ```
 
-3. **Access the application:**
+4. **Access the application:**
    - 🌐 **Frontend:** Port 3000
    - 🔧 **API Backend:** Port 8000
    - 📊 **API Documentation:** /docs endpoint
@@ -256,6 +260,7 @@ This project is licensed under the Business Source License 1.1 (BSL 1.1).
 For support or business inquiries:
 - 📧 Email: tiago@confenge.com.br
 - 🐙 GitHub: https://github.com/tjsasakifln/Vitruvius
+- 🚀 **Want to see the system in action? Get in touch!**
 
 ---
 

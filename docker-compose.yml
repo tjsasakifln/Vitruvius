@@ -39,7 +39,7 @@ services:
       - ./frontend/src:/app/src
 
   db:
-    image: postgres:15-alpine
+    image: postgres:15.4-alpine
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     environment:
@@ -50,7 +50,7 @@ services:
       - "5432:5432"
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     ports:
       - "6379:6379"
 

@@ -33,7 +33,7 @@ function Dashboard() {
       const data = await response.json();
       // Sanitize project data before setting state
       const sanitizedProjects = data.map(project => 
-        sanitizeObject(project, ['name', 'description'], [])
+        sanitizeObject(project, ['name', 'description', 'status'], [])
       );
       setProjects(sanitizedProjects);
       
@@ -59,7 +59,11 @@ function Dashboard() {
       }
       
       const data = await response.json();
-      setConflicts(data.conflicts || []);
+      // Sanitize conflict data before setting state
+      const sanitizedConflicts = (data.conflicts || []).map(conflict => 
+        sanitizeObject(conflict, ['type', 'description', 'severity', 'status'], [])
+      );
+      setConflicts(sanitizedConflicts);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching conflicts:', error);
@@ -102,7 +106,7 @@ function Dashboard() {
             ← Back to Dashboard
           </button>
           <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
-            Conflict #{selectedConflict.id} - {selectedConflict.type}
+            Conflict #{selectedConflict.id} - <SafeText text={selectedConflict.type} />
           </span>
         </div>
         <ConflictDetails 
@@ -188,8 +192,8 @@ function Dashboard() {
                 borderRadius: '5px',
                 backgroundColor: '#fff'
               }}>
-                <h3>{project.name}</h3>
-                <p><strong>Status:</strong> {project.status}</p>
+                <h3><SafeText text={project.name} /></h3>
+                <p><strong>Status:</strong> <SafeText text={project.status} /></p>
                 {project.created_at && (
                   <p><strong>Created:</strong> {new Date(project.created_at).toLocaleDateString()}</p>
                 )}
@@ -247,11 +251,11 @@ function Dashboard() {
                 borderRadius: '5px',
                 backgroundColor: conflict.severity === 'high' ? '#ffebee' : '#fff3e0'
               }}>
-                <h3>{conflict.type ? conflict.type.charAt(0).toUpperCase() + conflict.type.slice(1) : 'Unknown'} Conflict</h3>
-                <p><strong>Description:</strong> {conflict.description}</p>
-                <p><strong>Severity:</strong> {conflict.severity}</p>
-                <p><strong>Status:</strong> {conflict.status}</p>
-                <p><strong>Elements:</strong> {Array.isArray(conflict.elements) ? conflict.elements.join(', ') : conflict.elements || 'N/A'}</p>
+                <h3><SafeText text={conflict.type ? conflict.type.charAt(0).toUpperCase() + conflict.type.slice(1) : 'Unknown'} /> Conflict</h3>
+                <p><strong>Description:</strong> <SafeText text={conflict.description} /></p>
+                <p><strong>Severity:</strong> <SafeText text={conflict.severity} /></p>
+                <p><strong>Status:</strong> <SafeText text={conflict.status} /></p>
+                <p><strong>Elements:</strong> <SafeText text={Array.isArray(conflict.elements) ? conflict.elements.join(', ') : conflict.elements || 'N/A'} /></p>
                 {conflict.created_at && (
                   <p><strong>Detected:</strong> {new Date(conflict.created_at).toLocaleDateString()}</p>
                 )}

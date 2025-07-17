@@ -1,7 +1,7 @@
 # Production use requires a separate commercial license from the Licensor.
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Table, Boolean, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Table, Boolean, Float, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -36,10 +36,10 @@ class Project(Base):
     __tablename__ = "projects"
     
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    status = Column(String(50), default="created")
+    status = Column(String(50), default="created", index=True)
     aps_project_id = Column(String(255))  # APS project ID for integration
     aps_hub_id = Column(String(255))      # APS hub ID for integration
     
@@ -75,7 +75,7 @@ class ProjectCost(Base):
     __tablename__ = "project_costs"
     
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     parameter_name = Column(String(100), index=True, nullable=False)  # Ex: "CONCRETE_M3", "STEEL_KG", "LABOR_HOUR"
     cost = Column(Float, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -88,12 +88,12 @@ class IFCModel(Base):
     __tablename__ = "ifc_models"
     
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500))
     gltf_path = Column(String(500))  # Path to converted glTF file
     xkt_path = Column(String(500))   # Path to converted XKT file
-    status = Column(String(50), default="uploaded")
+    status = Column(String(50), default="uploaded", index=True)
     processed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -105,9 +105,9 @@ class Element(Base):
     __tablename__ = "elements"
     
     id = Column(Integer, primary_key=True, index=True)
-    ifc_model_id = Column(Integer, ForeignKey("ifc_models.id"), nullable=False)
-    ifc_id = Column(String(255), nullable=False)  # Original IFC element ID
-    element_type = Column(String(100), nullable=False)  # IfcWall, IfcWindow, etc.
+    ifc_model_id = Column(Integer, ForeignKey("ifc_models.id"), nullable=False, index=True)
+    ifc_id = Column(String(255), nullable=False, index=True)  # Original IFC element ID
+    element_type = Column(String(100), nullable=False, index=True)  # IfcWall, IfcWindow, etc.
     name = Column(String(255))
     description = Column(Text)
     geometry_data = Column(Text)  # JSON string for geometry information
@@ -122,11 +122,11 @@ class Conflict(Base):
     __tablename__ = "conflicts"
     
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    conflict_type = Column(String(100), nullable=False)
-    severity = Column(String(20), default="medium")
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    conflict_type = Column(String(100), nullable=False, index=True)
+    severity = Column(String(20), default="medium", index=True)
     description = Column(Text)
-    status = Column(String(50), default="detected")
+    status = Column(String(50), default="detected", index=True)
     aps_issue_id = Column(String(255))  # APS issue ID for integration
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -140,13 +140,13 @@ class Solution(Base):
     __tablename__ = "solutions"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    solution_type = Column(String(100), nullable=False)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    solution_type = Column(String(100), nullable=False, index=True)
     description = Column(Text)
     estimated_cost = Column(Integer)  # in cents
     estimated_time = Column(Integer)  # in days
-    confidence_score = Column(Float, default=1.0, nullable=False)  # 0.0-1.0
-    status = Column(String(50), default="proposed")
+    confidence_score = Column(Float, default=1.0, nullable=False, index=True)  # 0.0-1.0
+    status = Column(String(50), default="proposed", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
@@ -157,9 +157,9 @@ class SolutionFeedback(Base):
     __tablename__ = "solution_feedback"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    solution_id = Column(Integer, ForeignKey("solutions.id"), nullable=True)  # Null if custom solution
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    solution_id = Column(Integer, ForeignKey("solutions.id"), nullable=True, index=True)  # Null if custom solution
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     feedback_type = Column(String(50), nullable=False)  # "selected_suggested", "custom_solution"
     custom_solution_description = Column(Text)  # For custom solutions
     implementation_notes = Column(Text)  # Additional implementation details

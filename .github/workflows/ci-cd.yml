@@ -130,33 +130,66 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
+        BRANCH_NAME: ${{ github.ref_name }}
       run: |
         # Build without secrets to prevent leakage in Docker history
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG -f backend/Dockerfile backend/
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+        
+        # Tag with branch name for easier identification
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$BRANCH_NAME
+        
+        # Only tag as latest if on main/master branch
+        if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+        fi
+        
+        # Always push the SHA and branch tags
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$BRANCH_NAME
 
     - name: Build, tag, and push Worker image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
+        BRANCH_NAME: ${{ github.ref_name }}
       run: |
         # Build without secrets to prevent leakage in Docker history
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG -f backend/Dockerfile.worker backend/
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+        
+        # Tag with branch name for easier identification
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$BRANCH_NAME
+        
+        # Only tag as latest if on main/master branch
+        if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+        fi
+        
+        # Always push the SHA and branch tags
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_WORKER:$BRANCH_NAME
 
     - name: Build, tag, and push Frontend image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
+        BRANCH_NAME: ${{ github.ref_name }}
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG -f frontend/Dockerfile frontend/
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+        
+        # Tag with branch name for easier identification
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$BRANCH_NAME
+        
+        # Only tag as latest if on main/master branch
+        if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+        fi
+        
+        # Always push the SHA and branch tags
         docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY_FRONTEND:$BRANCH_NAME
 
   deploy:
     needs: build-and-push
@@ -178,13 +211,33 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
+    - name: Clean up old images
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      run: |
+        # Clean up old images to prevent ECR storage bloat
+        # Keep only the last 10 images for each repository
+        for repo in $ECR_REPOSITORY_BACKEND $ECR_REPOSITORY_WORKER $ECR_REPOSITORY_FRONTEND; do
+          echo "Cleaning up old images for $repo..."
+          aws ecr describe-images --repository-name $repo --query 'imageDetails[?imageDigest!=null]' --output json | \
+            jq '.[] | select(.imageTags | length > 0) | {imageDigest: .imageDigest, imagePushedAt: .imagePushedAt}' | \
+            jq -s 'sort_by(.imagePushedAt) | reverse | .[10:]' | \
+            jq -r '.[] | .imageDigest' | \
+            while read digest; do
+              if [ ! -z "$digest" ]; then
+                aws ecr batch-delete-image --repository-name $repo --image-ids imageDigest=$digest || true
+              fi
+            done
+        done
+
     - name: Deploy with Secure Secrets Management
       env:
         IMAGE_TAG: ${{ github.sha }}
+        BRANCH_NAME: ${{ github.ref_name }}
       run: |
         # Use secure deployment script that handles secrets via AWS Secrets Manager
         chmod +x scripts/secure-deploy.sh
-        ./scripts/secure-deploy.sh $IMAGE_TAG
+        ./scripts/secure-deploy.sh $IMAGE_TAG $BRANCH_NAME
 
     - name: Deploy Frontend to ECS
       env:

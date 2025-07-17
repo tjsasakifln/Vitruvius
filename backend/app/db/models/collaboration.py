@@ -1,7 +1,7 @@
 # Production use requires a separate commercial license from the Licensor.
 # For commercial licenses, please contact Tiago Sasaki at tiago@confenge.com.br.
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean, Float, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -13,12 +13,12 @@ class Comment(Base):
     __tablename__ = "comments"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    parent_comment_id = Column(Integer, ForeignKey("comments.id"), nullable=True)  # For replies
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    parent_comment_id = Column(Integer, ForeignKey("comments.id"), nullable=True, index=True)  # For replies
     message = Column(Text, nullable=False)
-    comment_type = Column(String(50), default="general")  # 'general', 'solution_review', 'annotation', 'status_update'
-    is_internal = Column(Boolean, default=False)  # Internal comments for team only
+    comment_type = Column(String(50), default="general", index=True)  # 'general', 'solution_review', 'annotation', 'status_update'
+    is_internal = Column(Boolean, default=False, index=True)  # Internal comments for team only
     is_edited = Column(Boolean, default=False)
     edited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -36,7 +36,7 @@ class CommentAttachment(Base):
     __tablename__ = "comment_attachments"
     
     id = Column(Integer, primary_key=True, index=True)
-    comment_id = Column(Integer, ForeignKey("comments.id"), nullable=False)
+    comment_id = Column(Integer, ForeignKey("comments.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
     file_size = Column(Integer)  # Size in bytes
@@ -51,10 +51,10 @@ class Annotation(Base):
     __tablename__ = "annotations"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    element_id = Column(Integer, ForeignKey("elements.id"), nullable=True)  # Optional element reference
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    annotation_type = Column(String(50), nullable=False)  # 'highlight', 'point', 'area', 'measurement'
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    element_id = Column(Integer, ForeignKey("elements.id"), nullable=True, index=True)  # Optional element reference
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    annotation_type = Column(String(50), nullable=False, index=True)  # 'highlight', 'point', 'area', 'measurement'
     title = Column(String(255))
     description = Column(Text)
     
@@ -63,14 +63,14 @@ class Annotation(Base):
     visual_data = Column(Text)   # JSON: colors, styles, measurements
     
     # Status and visibility
-    is_resolved = Column(Boolean, default=False)
+    is_resolved = Column(Boolean, default=False, index=True)
     is_visible = Column(Boolean, default=True)
-    priority = Column(String(20), default="medium")  # 'low', 'medium', 'high', 'critical'
+    priority = Column(String(20), default="medium", index=True)  # 'low', 'medium', 'high', 'critical'
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
-    resolved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     
     # Relationships
     conflict = relationship("Conflict", back_populates="annotations")
@@ -83,14 +83,14 @@ class ActivityLog(Base):
     __tablename__ = "activity_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=True)  # Optional conflict reference
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=True, index=True)  # Optional conflict reference
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
     # Activity details
-    activity_type = Column(String(100), nullable=False)  # 'conflict_created', 'solution_added', 'comment_posted', etc.
+    activity_type = Column(String(100), nullable=False, index=True)  # 'conflict_created', 'solution_added', 'comment_posted', etc.
     action = Column(String(50), nullable=False)  # 'create', 'update', 'delete', 'resolve', 'assign'
-    entity_type = Column(String(50), nullable=False)  # 'conflict', 'solution', 'comment', 'annotation'
+    entity_type = Column(String(50), nullable=False, index=True)  # 'conflict', 'solution', 'comment', 'annotation'
     entity_id = Column(Integer, nullable=True)  # ID of the affected entity
     
     # Change tracking
@@ -115,9 +115,9 @@ class ConflictAssignment(Base):
     __tablename__ = "conflict_assignments"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    assigned_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    assigned_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     role = Column(String(50), default="resolver")  # 'resolver', 'reviewer', 'observer'
     
     # Assignment details
@@ -126,7 +126,7 @@ class ConflictAssignment(Base):
     notes = Column(Text)
     
     # Status tracking
-    status = Column(String(50), default="assigned")  # 'assigned', 'accepted', 'working', 'completed', 'declined'
+    status = Column(String(50), default="assigned", index=True)  # 'assigned', 'accepted', 'working', 'completed', 'declined'
     accepted_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
@@ -143,19 +143,19 @@ class WorkflowState(Base):
     __tablename__ = "workflow_states"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    state = Column(String(50), nullable=False)  # 'open', 'investigating', 'solution_proposed', 'under_review', 'resolved', 'closed'
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    state = Column(String(50), nullable=False, index=True)  # 'open', 'investigating', 'solution_proposed', 'under_review', 'resolved', 'closed'
     previous_state = Column(String(50), nullable=True)
     
     # State change details
-    changed_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    changed_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     reason = Column(Text)  # Reason for state change
     automatic = Column(Boolean, default=False)  # Whether change was automatic
     
     # Workflow metadata
     workflow_data = Column(Text)  # JSON data for workflow-specific information
     approval_required = Column(Boolean, default=False)
-    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     approved_at = Column(DateTime, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -170,19 +170,19 @@ class Notification(Base):
     __tablename__ = "notifications"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=True, index=True)
     
     # Notification details
-    notification_type = Column(String(100), nullable=False)  # 'comment_reply', 'conflict_assigned', 'solution_added', etc.
+    notification_type = Column(String(100), nullable=False, index=True)  # 'comment_reply', 'conflict_assigned', 'solution_added', etc.
     title = Column(String(255), nullable=False)
     message = Column(Text, nullable=False)
     
     # Status and metadata
-    is_read = Column(Boolean, default=False)
+    is_read = Column(Boolean, default=False, index=True)
     is_email_sent = Column(Boolean, default=False)
-    priority = Column(String(20), default="normal")  # 'low', 'normal', 'high', 'urgent'
+    priority = Column(String(20), default="normal", index=True)  # 'low', 'normal', 'high', 'urgent'
     
     # Related entity information
     related_entity_type = Column(String(50))  # 'comment', 'solution', 'annotation'
@@ -205,8 +205,8 @@ class ConflictWatch(Base):
     __tablename__ = "conflict_watches"
     
     id = Column(Integer, primary_key=True, index=True)
-    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    conflict_id = Column(Integer, ForeignKey("conflicts.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     
     # Watch preferences
     watch_comments = Column(Boolean, default=True)
